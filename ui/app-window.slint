@@ -1,0 +1,988 @@
+import { Button, ComboBox, HorizontalBox, LineEdit, ListView, VerticalBox } from "std-widgets.slint";
+
+export struct SidebarEntry {
+    label: string,
+    caption: string,
+}
+
+export struct FileEntry {
+    name: string,
+    path: string,
+    kind: string,
+    size: string,
+    selected: bool,
+    focused: bool,
+}
+
+export struct BreadcrumbEntry {
+    label: string,
+}
+
+component ToolbarButton inherits Button {
+    min-width: 92px;
+    min-height: 40px;
+}
+
+component BreadcrumbChip inherits Rectangle {
+    in property<string> label;
+    callback activated;
+
+    height: 36px;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: #d5dee5;
+    background: #f6fafc;
+
+    Text {
+        text: label;
+        x: 14px;
+        y: 9px;
+        color: #274052;
+        font-weight: 600;
+    }
+
+    TouchArea {
+        clicked => {
+            root.activated();
+        }
+    }
+}
+
+component SidebarCard inherits Rectangle {
+    in property<SidebarEntry> entry;
+    in property<bool> selected: false;
+    callback activated;
+
+    height: 72px;
+    border-radius: 18px;
+    border-width: selected ? 0px : 1px;
+    border-color: #d5dbdf;
+    background: selected ? #143448 : #fbfcf9;
+
+    VerticalBox {
+        padding: 14px;
+        spacing: 4px;
+
+        Text {
+            text: entry.label;
+            font-size: 17px;
+            font-weight: 700;
+            color: selected ? #f5f7f9 : #233242;
+        }
+
+        Text {
+            text: entry.caption;
+            wrap: word-wrap;
+            color: selected ? #c9d7e2 : #62707d;
+        }
+    }
+
+    TouchArea {
+        clicked => {
+            root.activated();
+        }
+    }
+}
+
+component FileCard inherits Rectangle {
+    in property<FileEntry> entry;
+    callback activated(bool, bool);
+    callback open-requested;
+    callback copy-requested;
+    callback cut-requested;
+    callback rename-requested;
+    callback delete-requested;
+
+    height: 84px;
+    border-radius: 18px;
+    border-width: 1px;
+    border-color: entry.focused ? #224661 : (entry.selected ? #6d8fa6 : (entry.kind == "Folder" ? #d7d7a8 : #d9dde2));
+    background: entry.selected ? #d9e9f3 : (entry.focused ? #edf6fb : (entry.kind == "Folder" ? #fffbe4 : #ffffff));
+
+    Rectangle {
+        width: 6px;
+        height: parent.height - 20px;
+        x: 10px;
+        y: 10px;
+        border-radius: 3px;
+        background: entry.focused ? #163b57 : (entry.selected ? #84a8c2 : transparent);
+    }
+
+    HorizontalBox {
+        padding-left: 24px;
+        padding-right: 16px;
+        padding-top: 16px;
+        padding-bottom: 16px;
+        spacing: 14px;
+
+        Rectangle {
+            width: 54px;
+            height: 54px;
+            border-radius: 14px;
+            background: entry.kind == "Folder" ? #f1c24f : #d9e3ec;
+
+            Text {
+                text: entry.kind == "Folder" ? "DIR" : "FILE";
+                color: entry.kind == "Folder" ? #473300 : #294055;
+                font-size: 12px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        VerticalBox {
+            alignment: start;
+            spacing: 4px;
+
+            Text {
+                text: entry.name;
+                font-size: 17px;
+                font-weight: 700;
+                color: entry.focused ? #173245 : #1f2d39;
+                wrap: word-wrap;
+            }
+
+            Text {
+                text: entry.path;
+                color: #6a7883;
+                wrap: word-wrap;
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            background: transparent;
+        }
+
+        VerticalBox {
+            alignment: center;
+            spacing: 6px;
+
+            Text {
+                text: entry.kind;
+                color: entry.focused ? #173245 : #314352;
+                horizontal-alignment: right;
+            }
+
+            Text {
+                text: entry.size;
+                font-weight: 600;
+                color: entry.focused ? #365266 : #687784;
+                horizontal-alignment: right;
+            }
+        }
+    }
+
+    TouchArea {
+        double-clicked => {
+            root.open-requested();
+        }
+
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down &&
+                (event.button == PointerEventButton.left || event.button == PointerEventButton.right)) {
+                root.activated(event.modifiers.control, event.modifiers.shift);
+            }
+        }
+    }
+
+    ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: "Open";
+                activated => {
+                    root.open-requested();
+                }
+            }
+
+            MenuItem {
+                title: "Select";
+                activated => {
+                    root.activated(false, false);
+                }
+            }
+
+            MenuItem {
+                title: "Copy";
+                activated => {
+                    root.copy-requested();
+                }
+            }
+
+            MenuItem {
+                title: "Cut";
+                activated => {
+                    root.cut-requested();
+                }
+            }
+
+            MenuItem {
+                title: "Rename";
+                activated => {
+                    root.rename-requested();
+                }
+            }
+
+            MenuItem {
+                title: "Delete";
+                activated => {
+                    root.delete-requested();
+                }
+            }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    width: 1360px;
+    height: 860px;
+    title: "Files Rusted";
+    background: #ece8dc;
+
+    in-out property<string> current-path: "/";
+    in-out property<string> status-text: "Ready";
+    in-out property<int> item-count: 0;
+    in-out property<int> total-item-count: 0;
+    in-out property<int> active-sidebar-index: 0;
+    in-out property<int> current-sort-index: 0;
+    in-out property<int> selected-file-index: -1;
+    in-out property<bool> can-navigate-back: false;
+    in-out property<bool> can-navigate-forward: false;
+    in-out property<bool> can-open-selection: false;
+    in-out property<bool> can-transfer-selection: false;
+    in-out property<bool> can-paste: false;
+    in-out property<bool> can-rename-selection: false;
+    in-out property<bool> can-delete-selection: false;
+    in-out property<bool> rename-mode: false;
+    in-out property<string> clipboard-text: "Clipboard: empty";
+    in-out property<string> filter-text: "";
+    in-out property<string> rename-draft: "";
+    in-out property<string> selection-text: "No file selected";
+    in-out property<bool> drag-selection-active: false;
+    in-out property<float> drag-selection-x: 0;
+    in-out property<float> drag-selection-y: 0;
+    in-out property<float> drag-selection-width: 0;
+    in-out property<float> drag-selection-height: 0;
+    in-out property<[SidebarEntry]> sidebar-items;
+    in-out property<[FileEntry]> file-items;
+    in-out property<[BreadcrumbEntry]> breadcrumb-items;
+    in-out property<[string]> sort-options;
+
+    callback create-file();
+    callback request-copy();
+    callback request-cut();
+    callback paste-into-current-directory();
+    callback create-folder();
+    callback open-selected();
+    callback request-rename();
+    callback rename-draft-updated(string);
+    callback commit-rename();
+    callback cancel-rename();
+    callback delete-selected();
+    callback navigate-back();
+    callback navigate-forward();
+    callback navigate-home();
+    callback navigate-up();
+    callback refresh-directory();
+    callback activate-sidebar(int);
+    callback activate-breadcrumb(int);
+    callback activate-file(int, bool, bool);
+    callback open-item(int);
+    callback request-copy-item(int);
+    callback request-cut-item(int);
+    callback request-rename-item(int);
+    callback delete-item(int);
+    callback select-next(bool, bool);
+    callback select-previous(bool, bool);
+    callback select-boundary(bool, bool, bool);
+    callback toggle-focused-selection(bool, bool);
+    callback select-all();
+    callback clear-selection();
+    callback request-workspace-clear-selection();
+    callback begin-drag-selection(float, float, bool);
+    callback update-drag-selection(float, float);
+    callback finish-drag-selection();
+    callback clear-visible-item-layouts();
+    callback register-visible-item-layout(int, float, float, float, float);
+    callback sort-mode-selected(int);
+    callback filter-updated(string);
+
+    forward-focus: key-handler;
+
+    key-handler := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.DownArrow) {
+                root.select-next(event.modifiers.shift, event.modifiers.control);
+                accept
+            } else if (event.text == Key.UpArrow) {
+                root.select-previous(event.modifiers.shift, event.modifiers.control);
+                accept
+            } else if (event.text == Key.Home) {
+                root.select-boundary(false, event.modifiers.shift, event.modifiers.control);
+                accept
+            } else if (event.text == Key.End) {
+                root.select-boundary(true, event.modifiers.shift, event.modifiers.control);
+                accept
+            } else if (event.text == Key.Space) {
+                root.toggle-focused-selection(event.modifiers.shift, event.modifiers.control);
+                accept
+            } else if (event.text == Key.Return) {
+                root.open-selected();
+                accept
+            } else if (event.text == Key.Delete) {
+                root.delete-selected();
+                accept
+            } else if (event.text == Key.Escape) {
+                root.clear-selection();
+                accept
+            } else if (event.text == Key.F2) {
+                root.request-rename();
+                accept
+            } else if (event.modifiers.control && (event.text == "a" || event.text == "A")) {
+                root.select-all();
+                accept
+            } else if (event.modifiers.control && (event.text == "c" || event.text == "C")) {
+                root.request-copy();
+                accept
+            } else if (event.modifiers.control && (event.text == "x" || event.text == "X")) {
+                root.request-cut();
+                accept
+            } else if (event.modifiers.control && (event.text == "v" || event.text == "V")) {
+                root.paste-into-current-directory();
+                accept
+            } else {
+                reject
+            }
+        }
+    }
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: 196px;
+        background: #173449;
+
+        VerticalBox {
+            padding-left: 28px;
+            padding-right: 28px;
+            padding-top: 22px;
+            padding-bottom: 26px;
+            spacing: 18px;
+
+            Text {
+                text: "Files Rusted";
+                font-size: 30px;
+                font-weight: 800;
+                color: #f4f6f8;
+            }
+
+            Text {
+                text: "Rust 负责状态和文件系统，Slint 保持轻薄 UI。当前阶段先把只读浏览、导航和稳定布局做扎实。";
+                wrap: word-wrap;
+                color: #c9d5df;
+            }
+
+            HorizontalBox {
+                spacing: 10px;
+
+                ToolbarButton {
+                    enabled: root.can-navigate-back;
+                    text: "Back";
+                    clicked => {
+                        root.navigate-back();
+                    }
+                }
+
+                ToolbarButton {
+                    enabled: root.can-navigate-forward;
+                    text: "Forward";
+                    clicked => {
+                        root.navigate-forward();
+                    }
+                }
+
+                ToolbarButton {
+                    text: "Home";
+                    clicked => {
+                        root.navigate-home();
+                    }
+                }
+
+                ToolbarButton {
+                    text: "Up";
+                    clicked => {
+                        root.navigate-up();
+                    }
+                }
+
+                ToolbarButton {
+                    text: "Refresh";
+                    clicked => {
+                        root.refresh-directory();
+                    }
+                }
+
+                ToolbarButton {
+                    enabled: root.can-paste;
+                    text: "Paste";
+                    clicked => {
+                        root.paste-into-current-directory();
+                    }
+                }
+
+                ToolbarButton {
+                    text: "New File";
+                    clicked => {
+                        root.create-file();
+                    }
+                }
+
+                ToolbarButton {
+                    text: "New Folder";
+                    clicked => {
+                        root.create-folder();
+                    }
+                }
+
+                Rectangle {
+                    width: 10px;
+                    background: transparent;
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: transparent;
+                }
+
+                Rectangle {
+                    min-width: 430px;
+                    height: 48px;
+                    border-radius: 16px;
+                    background: #24465c;
+
+                    Text {
+                        text: root.current-path;
+                        x: 16px;
+                        y: 14px;
+                        width: parent.width - 32px;
+                        color: #f5f7f9;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+
+    HorizontalBox {
+        x: 24px;
+        y: 148px;
+        width: parent.width - 48px;
+        height: parent.height - 172px;
+        spacing: 20px;
+
+        Rectangle {
+            width: 286px;
+            border-radius: 28px;
+            background: #f6f7f2;
+            border-width: 1px;
+            border-color: #d8ddd8;
+
+            VerticalBox {
+                padding: 22px;
+                spacing: 18px;
+
+                Text {
+                    text: "Quick Access";
+                    font-size: 20px;
+                    font-weight: 700;
+                    color: #1d2a37;
+                }
+
+                Text {
+                    text: "先把关键入口和目录浏览跑通，再决定后续排序、筛选、选择模型怎么落。";
+                    wrap: word-wrap;
+                    color: #64717c;
+                }
+
+                ListView {
+                    for destination[i] in root.sidebar-items : SidebarCard {
+                        width: parent.width;
+                        entry: destination;
+                        selected: root.active-sidebar-index == i;
+                        activated => {
+                            root.activate-sidebar(i);
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            border-radius: 28px;
+            background: #f9faf7;
+            border-width: 1px;
+            border-color: #d8ddd8;
+
+            TouchArea {
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down &&
+                        event.button == PointerEventButton.left &&
+                        !event.modifiers.control &&
+                        !event.modifiers.shift &&
+                        !event.modifiers.alt &&
+                        !event.modifiers.meta) {
+                        root.clear-selection();
+                    }
+                }
+            }
+
+            ContextMenuArea {
+                Menu {
+                    MenuItem {
+                        title: "Open";
+                        enabled: root.can-open-selection;
+                        activated => {
+                            root.open-selected();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Copy";
+                        enabled: root.can-transfer-selection;
+                        activated => {
+                            root.request-copy();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Cut";
+                        enabled: root.can-transfer-selection;
+                        activated => {
+                            root.request-cut();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Paste";
+                        enabled: root.can-paste;
+                        activated => {
+                            root.paste-into-current-directory();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Rename";
+                        enabled: root.can-rename-selection;
+                        activated => {
+                            root.request-rename();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Delete";
+                        enabled: root.can-delete-selection;
+                        activated => {
+                            root.delete-selected();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "New File";
+                        activated => {
+                            root.create-file();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "New Folder";
+                        activated => {
+                            root.create-folder();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Select All";
+                        activated => {
+                            root.select-all();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Clear Selection";
+                        activated => {
+                            root.clear-selection();
+                        }
+                    }
+                }
+            }
+
+            VerticalBox {
+                padding: 24px;
+                spacing: 18px;
+
+                HorizontalBox {
+                    spacing: 14px;
+
+                    VerticalBox {
+                        spacing: 6px;
+
+                        Text {
+                            text: "Directory Snapshot";
+                            font-size: 22px;
+                            font-weight: 800;
+                            color: #1d2b37;
+                        }
+
+                        Text {
+                            text: root.item-count + " visible / " + root.total-item-count + " total";
+                            color: #66737d;
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        background: transparent;
+                    }
+
+                    Rectangle {
+                        min-width: 240px;
+                        height: 56px;
+                        border-radius: 16px;
+                        background: #eef3f5;
+
+                        Text {
+                            text: root.status-text;
+                            x: 16px;
+                            y: 10px;
+                            width: parent.width - 32px;
+                            color: #385061;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    border-radius: 18px;
+                    background: #f5f8f8;
+                    border-width: 1px;
+                    border-color: #dde4df;
+                    min-height: 56px;
+
+                    HorizontalBox {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                        spacing: 8px;
+
+                        for crumb[i] in root.breadcrumb-items : HorizontalBox {
+                            spacing: 8px;
+
+                            if i > 0 : Text {
+                                text: ">";
+                                color: #7a8892;
+                                vertical-alignment: center;
+                            }
+
+                            BreadcrumbChip {
+                                label: crumb.label;
+                                activated => {
+                                    root.activate-breadcrumb(i);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 14px;
+
+                    LineEdit {
+                        text <=> root.filter-text;
+                        placeholder-text: "Filter current directory";
+                        edited(value) => {
+                            root.filter-updated(value);
+                        }
+                    }
+
+                    ComboBox {
+                        width: 220px;
+                        model: root.sort-options;
+                        current-index <=> root.current-sort-index;
+                        changed current-index => {
+                            root.sort-mode-selected(self.current-index);
+                        }
+                    }
+                }
+
+                Rectangle {
+                    border-radius: 18px;
+                    background: #f0f4f6;
+                    border-width: 1px;
+                    border-color: #dde5e9;
+                    min-height: 52px;
+
+                    HorizontalBox {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                        spacing: 12px;
+
+                        VerticalBox {
+                            spacing: 4px;
+
+                            Text {
+                                text: root.selection-text;
+                                color: #3a5161;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: root.clipboard-text;
+                                color: #6d7c88;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            background: transparent;
+                        }
+
+                        ToolbarButton {
+                            enabled: root.can-open-selection;
+                            text: "Open";
+                            clicked => {
+                                root.open-selected();
+                            }
+                        }
+
+                        ToolbarButton {
+                            enabled: root.can-transfer-selection;
+                            text: "Copy";
+                            clicked => {
+                                root.request-copy();
+                            }
+                        }
+
+                        ToolbarButton {
+                            enabled: root.can-transfer-selection;
+                            text: "Cut";
+                            clicked => {
+                                root.request-cut();
+                            }
+                        }
+
+                        ToolbarButton {
+                            enabled: root.can-rename-selection;
+                            text: "Rename";
+                            clicked => {
+                                root.request-rename();
+                            }
+                        }
+
+                        ToolbarButton {
+                            enabled: root.can-delete-selection;
+                            text: "Delete";
+                            clicked => {
+                                root.delete-selected();
+                            }
+                        }
+                    }
+                }
+
+                if root.rename-mode : Rectangle {
+                    border-radius: 18px;
+                    background: #fff7df;
+                    border-width: 1px;
+                    border-color: #ead39a;
+                    min-height: 60px;
+
+                    HorizontalBox {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                        spacing: 12px;
+
+                        Text {
+                            text: "Rename to";
+                            color: #5b4a17;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+
+                        LineEdit {
+                            text <=> root.rename-draft;
+                            placeholder-text: "New name";
+                            edited(value) => {
+                                root.rename-draft-updated(value);
+                            }
+                        }
+
+                        ToolbarButton {
+                            text: "Apply";
+                            clicked => {
+                                root.commit-rename();
+                            }
+                        }
+
+                        ToolbarButton {
+                            text: "Cancel";
+                            clicked => {
+                                root.cancel-rename();
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    border-radius: 20px;
+                    background: #eef2ee;
+                    border-width: 1px;
+                    border-color: #dde2db;
+                    min-height: 56px;
+
+                    HorizontalBox {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 16px;
+                        padding-bottom: 16px;
+                        spacing: 12px;
+
+                        Text {
+                            text: "Name";
+                            font-size: 14px;
+                            font-weight: 700;
+                            color: #52626f;
+                        }
+
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            background: transparent;
+                        }
+
+                        Text {
+                            text: "Type";
+                            font-size: 14px;
+                            font-weight: 700;
+                            color: #52626f;
+                        }
+
+                        Text {
+                            text: "Size";
+                            font-size: 14px;
+                            font-weight: 700;
+                            color: #52626f;
+                        }
+                    }
+                }
+
+                if root.item-count == 0 : Rectangle {
+                    border-radius: 24px;
+                    background: #f0f3ef;
+                    border-width: 1px;
+                    border-color: #dde2db;
+                    vertical-stretch: 1;
+
+                    VerticalBox {
+                        alignment: center;
+                        spacing: 12px;
+
+                        Text {
+                            text: root.total-item-count == 0 ? "This directory is empty" : "No items match the current filter";
+                            font-size: 22px;
+                            font-weight: 700;
+                            color: #1f2d39;
+                            horizontal-alignment: center;
+                        }
+
+                        Text {
+                            text: root.total-item-count == 0 ? "先保持浏览链路正确，再补排序、筛选、右键菜单和写操作。" : "调整筛选词或排序方式，看看当前目录里还有哪些结果。";
+                            color: #64717c;
+                            wrap: word-wrap;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                if root.item-count > 0 : Rectangle {
+                    clip: true;
+                    vertical-stretch: 1;
+                    background: transparent;
+
+                    TouchArea {
+                        pointer-event(event) => {
+                            if (event.button == PointerEventButton.left) {
+                                if (event.kind == PointerEventKind.down) {
+                                    root.begin-drag-selection(self.mouse-x / 1px, self.mouse-y / 1px, event.modifiers.control);
+                                } else if (event.kind == PointerEventKind.move) {
+                                    root.update-drag-selection(self.mouse-x / 1px, self.mouse-y / 1px);
+                                } else if (event.kind == PointerEventKind.up) {
+                                    root.request-workspace-clear-selection();
+                                }
+                            }
+                        }
+                    }
+
+                    ListView {
+                        width: parent.width;
+                        height: parent.height;
+
+                        for entry[i] in root.file-items : FileCard {
+                            width: parent.width;
+                            entry: entry;
+
+                            changed x => {
+                                root.register-visible-item-layout(i, self.x / 1px, self.y / 1px, self.width / 1px, self.height / 1px);
+                            }
+                            changed y => {
+                                root.register-visible-item-layout(i, self.x / 1px, self.y / 1px, self.width / 1px, self.height / 1px);
+                            }
+                            changed width => {
+                                root.register-visible-item-layout(i, self.x / 1px, self.y / 1px, self.width / 1px, self.height / 1px);
+                            }
+                            changed height => {
+                                root.register-visible-item-layout(i, self.x / 1px, self.y / 1px, self.width / 1px, self.height / 1px);
+                            }
+
+                            activated(ctrl, shift) => {
+                                root.activate-file(i, ctrl, shift);
+                            }
+                            open-requested => {
+                                root.open-item(i);
+                            }
+                            copy-requested => {
+                                root.request-copy-item(i);
+                            }
+                            cut-requested => {
+                                root.request-cut-item(i);
+                            }
+                            rename-requested => {
+                                root.request-rename-item(i);
+                            }
+                            delete-requested => {
+                                root.delete-item(i);
+                            }
+                        }
+                    }
+
+                    if root.drag-selection-active : Rectangle {
+                        x: root.drag-selection-x * 1px;
+                        y: root.drag-selection-y * 1px;
+                        width: root.drag-selection-width * 1px;
+                        height: root.drag-selection-height * 1px;
+                        border-radius: 8px;
+                        border-width: 1px;
+                        border-color: #4c7ea1;
+                        background: #84a8c244;
+                    }
+                }
+            }
+        }
+    }
+}
