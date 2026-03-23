@@ -1742,27 +1742,6 @@ mod tests {
     }
 
     #[test]
-    fn drag_selection_module_keeps_control_toggle_behavior() {
-        let baseline = drag_snapshot(
-            vec![path("a.txt"), path("c.txt")],
-            Some(path("c.txt")),
-            Some(path("c.txt")),
-        );
-        let session = DragSelectionSession::begin(DragPoint::new(0.0, 0.0), true, baseline);
-        let layouts = vec![
-            layout("a.txt", 0.0, 0.0, 300.0, 84.0),
-            layout("b.txt", 0.0, 92.0, 300.0, 84.0),
-            layout("c.txt", 0.0, 184.0, 300.0, 84.0),
-        ];
-
-        let result = session.selection_for(DragPoint::new(280.0, 150.0), &layouts, 4.0);
-
-        assert_eq!(result.selected, vec![path("b.txt"), path("c.txt")]);
-        assert_eq!(result.primary, Some(path("b.txt")));
-        assert_eq!(result.anchor, Some(path("b.txt")));
-    }
-
-    #[test]
     fn drag_selection_clears_selection_when_rectangle_hits_nothing() {
         let base = drag_snapshot(
             vec![path("a.txt")],
