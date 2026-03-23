@@ -1830,6 +1830,17 @@ mod tests {
     }
 
     #[test]
+    fn selection_state_ctrl_toggle_last_selected_item_clears_operation_selection() {
+        let mut selection = SelectionState::default();
+
+        selection.set_single_selection(Some(path("a.txt")));
+        selection.toggle_selection(path("a.txt"));
+
+        assert!(selection.selected_paths().is_empty());
+        assert!(selection.selected_items_for_operation().is_empty());
+    }
+
+    #[test]
     fn selection_state_keeps_ctrl_workspace_click_behavior() {
         let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
 

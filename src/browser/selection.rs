@@ -57,7 +57,11 @@ impl SelectionState {
         let mut selection = self.selected_paths.clone();
         if let Some(index) = selection.iter().position(|path| *path == target) {
             selection.remove(index);
-            self.set_explicit_selection(selection, Some(target.clone()), Some(target));
+            if selection.is_empty() {
+                self.set_explicit_selection(selection, None, None);
+            } else {
+                self.set_explicit_selection(selection, Some(target.clone()), Some(target));
+            }
         } else {
             selection.push(target.clone());
             self.set_explicit_selection(selection, Some(target.clone()), Some(target));
