@@ -1,5 +1,7 @@
 # Rectangle Selection Implementation Plan
 
+> 状态说明：这份 plan 对应的矩形框选任务已完成，保留它是为了记录当时的实施拆分与验收思路；当前代码状态已经继续演进，包含了后续的 selection 边界整理和 drag-autoscroll 支持，因此不要再把本文当作“待执行任务单”直接照抄。
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add first-pass desktop-style rectangle selection to the file list without breaking the existing click, keyboard, context-menu, and focus/selection semantics.

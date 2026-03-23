@@ -1,5 +1,7 @@
 # Selection Boundary Refactor Implementation Plan
 
+> 状态说明：这份 plan 对应的 selection / drag-selection 边界整理任务已完成，保留它是为了记录当时的拆分步骤与约束；当前代码已经在这个边界上继续加入了 drag-autoscroll，因此不要再把本文视为仓库当前状态的完整描述。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Refactor Files Rusted’s selection and rectangle-selection logic into focused submodules without changing the existing selection, keyboard, and drag semantics.

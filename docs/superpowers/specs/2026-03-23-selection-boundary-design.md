@@ -22,10 +22,11 @@
 
 - 不拆 navigation state
 - 不拆 file operations service
-- 不新增自动滚动
 - 不新增地址栏、标签页、双栏等大功能
 - 不顺手重写 UI 结构
 - 不做大规模测试框架调整
+
+> 说明：本文档对应的 selection / drag-selection 边界整理目标已完成。后续 drag-autoscroll 已在这个边界基础上继续落地，所以这里原先写的“不新增自动滚动”仅表示该次边界整理本身的范围，不代表当前项目现状。
 
 ## 范围
 

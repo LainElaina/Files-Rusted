@@ -23,6 +23,9 @@ Files Rusted/
 ├── build.rs
 ├── src/
 │   ├── browser.rs
+│   ├── browser/
+│   │   ├── drag_selection.rs
+│   │   └── selection.rs
 │   └── main.rs
 └── ui/
     └── app-window.slint
@@ -31,7 +34,7 @@ Files Rusted/
 ## 当前状态
 
 - 已建立 `Rust + Slint` 应用壳层
-- 已接入只读目录浏览
+- 已接入目录浏览
 - 已实现 `Home / Up / Refresh` 导航按钮
 - 已实现左侧快速入口和主文件列表视图
 - 已实现排序、筛选和文件选中反馈
@@ -45,10 +48,14 @@ Files Rusted/
 - 已为主工作区补上空白区域上下文菜单
 - 已加强焦点项和选中项的视觉区分
 - 已支持左键点击空白区域清空当前选择
+- 已实现桌面式矩形框选
+- 已实现拖框自动滚动，并在滚动后持续重算命中结果
+- 已把选择与拖框核心逻辑拆到 `src/browser/selection.rs` 和 `src/browser/drag_selection.rs`
 - 已接入最小写操作：`New Folder / Rename / Delete`
 - 已接入最小传输操作：`Copy / Cut / Paste`
 - 已接入基础 `Open` 和 `New File`
 - 已把目录状态与展示逻辑拆到 `src/browser.rs`
+- 已在当前容器内完成 `cargo test`
 - 已在当前容器内完成 `cargo build`
 - 已通过 `xvfb-run` 做过一次启动级验证
 
@@ -81,30 +88,37 @@ Files Rusted/
    - `Shift + 方向键`：按列表扩展选择
    - `Home / End`：跳到首项或尾项
    - `Space`：按焦点项更新选择；`Ctrl+Space` 切换焦点项选中状态
-5. 当前已接入最小写操作：
+5. 当前已具备桌面式拖框选择：
+   - 支持从非条目区域开始矩形框选
+   - 支持无修饰键拖框和 `Ctrl` 拖框
+   - 拖框进入列表视口顶部/底部热区时支持自动滚动
+   - 滚动过程中会基于最新可见布局持续重算命中结果
+   - 到内容边界或结束拖框后会停止自动滚动
+6. 当前已接入最小写操作：
    - `New Folder`：在当前目录创建唯一名称的新文件夹，并立即进入重命名态
    - `New File`：在当前目录创建唯一名称的空文本文件，并立即进入重命名态
    - `Rename`：支持对当前选中项重命名
    - `Delete`：当前支持删除文件和目录，目录删除走递归删除
-6. 当前已接入最小传输操作：
+7. 当前已接入最小传输操作：
    - `Copy / Cut`：把当前选中项放入应用内剪贴状态
    - `Paste`：粘贴到当前目录；复制支持同目录生成 `Copy` 后缀，剪切会在需要时自动生成不冲突名称
-7. 当前上下文菜单分两层：
-   - 项目菜单：`Open / Copy / Cut / Rename / Delete`
-   - 工作区空白区域菜单：`Open / Copy / Cut / Paste / New File / New Folder / Select All / Clear Selection`
-8. 当前空白区域交互：
+8. 当前上下文菜单分两层：
+   - 项目菜单：`Open / Select / Copy / Cut / Rename / Delete`
+   - 工作区空白区域菜单：`Open / Copy / Cut / Paste / Rename / Delete / New File / New Folder / Select All / Clear Selection`
+9. 当前空白区域交互：
    - 左键点击空白区域：清空焦点和选中集合
    - 右键点击空白区域：弹出工作区菜单
 
 ## 已验证项
 
 1. 已在当前容器中安装 `rustup` stable 工具链，当前版本为 `rustc 1.94.0` / `cargo 1.94.0`。
-2. `cargo build` 已成功通过。
-3. 程序已在 `xvfb-run` 提供的虚拟显示环境中成功启动，并持续运行到外部 `timeout` 结束。
+2. `cargo test` 已成功通过。
+3. `cargo build` 已成功通过。
+4. 程序已在 `xvfb-run` 提供的虚拟显示环境中成功启动，并持续运行到外部 `timeout` 结束；当前环境会打印一条 `xdg color schemes` 监听警告，但不影响启动。
 
 ## 建议下一步
 
-1. 继续拆分数据模型和状态边界，不要让 `browser.rs` 演变成新的“大文件”。
-2. 补上真正的目录返回栈视图和更完整的导航状态恢复。
-3. 把当前基础多选继续升级成更接近文件管理器的选择模型，例如矩形框选和更细的 Ctrl+Shift 行为。
+1. 在真实桌面环境里手工验证拖框自动滚动的连续体验、边界停止和视觉反馈。
+2. 继续拆分 `browser.rs` 中与导航、文件操作相关的剩余职责，不要让它重新演变成新的“大文件”。
+3. 继续把当前选择模型打磨到更接近桌面文件管理器，例如更细的 `Ctrl+Shift` 组合行为和更多边界交互一致性。
 4. 逐步补上真正的跨目录复制/移动体验、系统剪贴板对接，以及更完整的冲突处理和打开错误反馈。
