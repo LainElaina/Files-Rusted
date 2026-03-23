@@ -210,7 +210,7 @@ impl BrowserState {
                 .set_single_selection(Some(target.clone()));
         }
 
-        if !control || shift || self.selection_state.borrow().primary_selected_path().is_some() {
+        if !control || shift {
             self.selection_state
                 .borrow_mut()
                 .ensure_selection_anchor(Some(target));
@@ -1833,6 +1833,35 @@ mod tests {
         assert_eq!(
             state.selection_state.borrow().selected_paths(),
             [path("b.txt"), path("c.txt")]
+        );
+    }
+
+    #[test]
+    fn browser_state_ctrl_toggle_removal_from_multi_selection_preserves_selected_anchor() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        state.visible_paths.borrow_mut().extend([path("a.txt"), path("b.txt")]);
+        state.selection_state.borrow_mut().set_explicit_selection(
+            vec![path("a.txt"), path("b.txt")],
+            Some(path("b.txt")),
+            Some(path("b.txt")),
+        );
+
+        state.activate_file_selection(1, true, false);
+
+        assert_eq!(state.selection_state.borrow().selected_paths(), [path("a.txt")]);
+        assert!(!state
+            .selection_state
+            .borrow()
+            .selected_paths()
+            .contains(&path("b.txt")));
+        assert_eq!(
+            state.selection_state.borrow().primary_selected_path().cloned(),
+            Some(path("a.txt"))
+        );
+        assert_eq!(
+            state.selection_state.borrow().selection_anchor_path().cloned(),
+            Some(path("a.txt"))
         );
     }
 
