@@ -1909,55 +1909,34 @@ mod tests {
     #[test]
     fn browser_state_public_selection_flow_still_works_after_refactor() {
         let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let layouts = vec![
+            layout("a.txt", 0.0, 0.0, 300.0, 84.0),
+            layout("b.txt", 0.0, 92.0, 300.0, 84.0),
+            layout("c.txt", 0.0, 184.0, 300.0, 84.0),
+        ];
 
         state
             .visible_paths
             .borrow_mut()
             .extend([path("a.txt"), path("b.txt"), path("c.txt")]);
+        state.replace_visible_item_layouts(layouts);
 
-        state.activate_file_selection(0, false, false);
-        assert_eq!(state.selection_state.borrow().selected_paths(), [path("a.txt")]);
-        assert_eq!(
-            state.selection_state.borrow().primary_selected_path().cloned(),
-            Some(path("a.txt"))
-        );
-        assert_eq!(
-            state.selection_state.borrow().selection_anchor_path().cloned(),
-            Some(path("a.txt"))
-        );
+        state.begin_drag_selection(DragPoint::new(0.0, 0.0), false);
+        state.update_drag_selection(DragPoint::new(280.0, 150.0));
+        state.finish_drag_selection();
 
-        state.activate_file_selection(2, false, true);
         assert_eq!(
             state.selection_state.borrow().selected_paths(),
-            [path("a.txt"), path("b.txt"), path("c.txt")]
+            [path("a.txt"), path("b.txt")]
         );
         assert_eq!(
             state.selection_state.borrow().primary_selected_path().cloned(),
-            Some(path("c.txt"))
+            Some(path("b.txt"))
         );
         assert_eq!(
             state.selection_state.borrow().selection_anchor_path().cloned(),
-            Some(path("c.txt"))
+            Some(path("b.txt"))
         );
-
-        state.activate_file_selection(1, true, false);
-        assert_eq!(
-            state.selection_state.borrow().selected_paths(),
-            [path("a.txt"), path("c.txt")]
-        );
-        assert_eq!(
-            state.selection_state.borrow().primary_selected_path().cloned(),
-            Some(path("c.txt"))
-        );
-        assert_eq!(
-            state.selection_state.borrow().selection_anchor_path().cloned(),
-            Some(path("c.txt"))
-        );
-
-        state.selection_state.borrow_mut().clear_selection();
-        assert!(state.selection_state.borrow().selected_paths().is_empty());
-        assert_eq!(state.selection_state.borrow().primary_selected_path().cloned(), None);
-        assert_eq!(state.selection_state.borrow().selection_anchor_path().cloned(), None);
     }
 
     fn path(name: &str) -> PathBuf {
