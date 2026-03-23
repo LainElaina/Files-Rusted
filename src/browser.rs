@@ -29,6 +29,7 @@ pub struct BrowserState {
     drag_selection_rect: RefCell<Option<DragRect>>,
     drag_scroll_viewport: RefCell<Option<DragScrollViewport>>,
     pending_drag_autoscroll: RefCell<f32>,
+    drag_pointer: RefCell<Option<DragPoint>>,
     selection_state: RefCell<SelectionState>,
     sort_mode: RefCell<SortMode>,
     filter_query: RefCell<String>,
@@ -55,6 +56,7 @@ impl BrowserState {
                 drag_selection_rect: RefCell::new(None),
                 drag_scroll_viewport: RefCell::new(None),
                 pending_drag_autoscroll: RefCell::new(0.0),
+                drag_pointer: RefCell::new(None),
                 selection_state: RefCell::new(SelectionState::default()),
                 sort_mode: RefCell::new(SortMode::NameAsc),
                 filter_query: RefCell::new(String::new()),
@@ -998,20 +1000,60 @@ impl BrowserState {
         self.drag_selection_session.borrow().is_some()
     }
 
-    pub fn set_drag_scroll_viewport_from_ui(&self, content_top: f32, content_height: f32) {
+    pub fn set_drag_scroll_viewport_from_ui(
+        &self,
+        content_top: f32,
+        content_height: f32,
+        scroll_position: f32,
+        max_scroll_position: f32,
+    ) {
         self.set_drag_scroll_viewport(Some(DragScrollViewport {
             content_top,
             content_height,
             hot_zone_size: 32.0,
             max_speed: 24.0,
+            scroll_position,
+            max_scroll_position,
         }));
     }
 
-    pub fn take_pending_drag_autoscroll(&self) -> f32 {
-        let mut pending = self.pending_drag_autoscroll.borrow_mut();
-        let delta = *pending;
-        *pending = 0.0;
-        delta
+    pub fn execute_drag_autoscroll_step_from_ui(
+        &self,
+        applied_delta: f32,
+        window: &AppWindow,
+        file_model: &VecModel<FileEntry>,
+    ) {
+        self.recompute_drag_selection_after_scroll_step(applied_delta);
+        self.apply_view(window, file_model);
+    }
+
+    fn recompute_drag_selection_after_scroll_step(&self, applied_delta: f32) {
+        if self.drag_selection_session.borrow().is_none() {
+            *self.pending_drag_autoscroll.borrow_mut() = 0.0;
+            return;
+        }
+
+        let pointer = *self.drag_pointer.borrow();
+        if let Some(pointer) = pointer {
+            self.update_drag_selection(pointer);
+        }
+
+        if applied_delta == 0.0 {
+            *self.pending_drag_autoscroll.borrow_mut() = 0.0;
+        }
+    }
+
+    pub fn drag_autoscroll_step_for_active_drag(&self) -> f32 {
+        if self.drag_selection_session.borrow().is_none() {
+            return 0.0;
+        }
+
+        let pointer = *self.drag_pointer.borrow();
+        if let Some(pointer) = pointer {
+            self.compute_pending_drag_autoscroll(pointer);
+        }
+
+        std::mem::take(&mut *self.pending_drag_autoscroll.borrow_mut())
     }
 
     fn set_drag_scroll_viewport(&self, viewport: Option<DragScrollViewport>) {
@@ -1030,7 +1072,16 @@ impl BrowserState {
         let delta = self
             .drag_scroll_viewport
             .borrow()
-            .map(|viewport| compute_drag_autoscroll_delta(pointer.y, viewport))
+            .map(|viewport| {
+                let requested = compute_drag_autoscroll_delta(pointer.y, viewport);
+                if requested < 0.0 && viewport.scroll_position <= 0.0 {
+                    0.0
+                } else if requested > 0.0 && viewport.scroll_position >= viewport.max_scroll_position {
+                    0.0
+                } else {
+                    requested
+                }
+            })
             .unwrap_or(0.0);
         *self.pending_drag_autoscroll.borrow_mut() = delta;
     }
@@ -1043,12 +1094,15 @@ impl BrowserState {
         ));
         self.drag_selection_rect.borrow_mut().take();
         *self.pending_drag_autoscroll.borrow_mut() = 0.0;
+        *self.drag_pointer.borrow_mut() = Some(start);
     }
 
     fn update_drag_selection(&self, point: DragPoint) {
         let Some(session) = self.drag_selection_session.borrow().clone() else {
             return;
         };
+
+        *self.drag_pointer.borrow_mut() = Some(point);
 
         let result = session.selection_for(point, &self.visible_item_layouts.borrow(), 4.0);
         *self.drag_selection_rect.borrow_mut() = result.rect;
@@ -1083,6 +1137,7 @@ impl BrowserState {
         self.drag_selection_session.borrow_mut().take();
         self.drag_selection_rect.borrow_mut().take();
         *self.pending_drag_autoscroll.borrow_mut() = 0.0;
+        self.drag_pointer.borrow_mut().take();
     }
 
     fn update_breadcrumbs(&self, window: &AppWindow, current_dir: &Path) {
@@ -1969,6 +2024,8 @@ mod tests {
             content_height: 300.0,
             hot_zone_size: 32.0,
             max_speed: 24.0,
+            scroll_position: 120.0,
+            max_scroll_position: 240.0,
         }));
 
         state.begin_drag_selection(DragPoint::new(100.0, 2.0), false);
@@ -1995,6 +2052,8 @@ mod tests {
             content_height: 300.0,
             hot_zone_size: 32.0,
             max_speed: 24.0,
+            scroll_position: 120.0,
+            max_scroll_position: 240.0,
         }));
 
         state.begin_drag_selection(DragPoint::new(0.0, 0.0), false);
@@ -2023,12 +2082,14 @@ mod tests {
             content_height: 300.0,
             hot_zone_size: 32.0,
             max_speed: 24.0,
+            scroll_position: 120.0,
+            max_scroll_position: 240.0,
         }));
 
         state.begin_drag_selection(DragPoint::new(0.0, 120.0), true);
         state.update_drag_selection(DragPoint::new(280.0, 295.0));
 
-        let requested = state.take_pending_drag_autoscroll();
+        let requested = state.drag_autoscroll_step_for_active_drag();
         assert!(requested > 0.0);
 
         state.finish_drag_selection();
@@ -2038,6 +2099,108 @@ mod tests {
             [path("a.txt"), path("b.txt")]
         );
         assert_eq!(state.pending_drag_autoscroll(), 0.0);
+    }
+
+    #[test]
+    fn browser_state_drag_autoscroll_tick_keeps_running_without_pointer_moves() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let layouts = vec![
+            layout("a.txt", 0.0, 0.0, 300.0, 84.0),
+            layout("b.txt", 0.0, 92.0, 300.0, 84.0),
+            layout("c.txt", 0.0, 184.0, 300.0, 84.0),
+        ];
+
+        state.replace_visible_item_layouts(layouts);
+        state.set_drag_scroll_viewport(Some(DragScrollViewport {
+            content_top: 0.0,
+            content_height: 300.0,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+            scroll_position: 120.0,
+            max_scroll_position: 240.0,
+        }));
+
+        state.begin_drag_selection(DragPoint::new(0.0, 120.0), false);
+        state.update_drag_selection(DragPoint::new(280.0, 295.0));
+        assert!(state.drag_autoscroll_step_for_active_drag() > 0.0);
+
+        let tick_delta = state.drag_autoscroll_step_for_active_drag();
+        assert!(tick_delta > 0.0);
+    }
+
+    #[test]
+    fn browser_state_drag_autoscroll_step_recomputes_selection_after_scroll() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let layouts_before = vec![
+            layout("a.txt", 0.0, 0.0, 300.0, 84.0),
+            layout("b.txt", 0.0, 92.0, 300.0, 84.0),
+            layout("c.txt", 0.0, 184.0, 300.0, 84.0),
+        ];
+        let layouts_after = vec![
+            layout("a.txt", 0.0, -120.0, 300.0, 84.0),
+            layout("b.txt", 0.0, -28.0, 300.0, 84.0),
+            layout("c.txt", 0.0, 64.0, 300.0, 84.0),
+        ];
+
+        state.replace_visible_item_layouts(layouts_before);
+        state.set_drag_scroll_viewport(Some(DragScrollViewport {
+            content_top: 0.0,
+            content_height: 300.0,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+            scroll_position: 120.0,
+            max_scroll_position: 240.0,
+        }));
+
+        state.begin_drag_selection(DragPoint::new(0.0, 0.0), false);
+        state.update_drag_selection(DragPoint::new(280.0, 150.0));
+        assert_eq!(
+            state.selection_state.borrow().selected_paths(),
+            [path("a.txt"), path("b.txt")]
+        );
+
+        state.replace_visible_item_layouts(layouts_after);
+        state.recompute_drag_selection_after_scroll_step(24.0);
+
+        assert_eq!(
+            state.selection_state.borrow().selected_paths(),
+            [path("b.txt"), path("c.txt")]
+        );
+    }
+
+    #[test]
+    fn browser_state_drag_autoscroll_stops_at_boundaries() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let layouts = vec![
+            layout("a.txt", 0.0, 0.0, 300.0, 84.0),
+            layout("b.txt", 0.0, 92.0, 300.0, 84.0),
+            layout("c.txt", 0.0, 184.0, 300.0, 84.0),
+        ];
+
+        state.replace_visible_item_layouts(layouts);
+
+        state.set_drag_scroll_viewport(Some(DragScrollViewport {
+            content_top: 0.0,
+            content_height: 300.0,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+            scroll_position: 0.0,
+            max_scroll_position: 240.0,
+        }));
+        state.begin_drag_selection(DragPoint::new(0.0, 120.0), false);
+        state.update_drag_selection(DragPoint::new(280.0, 4.0));
+        assert_eq!(state.drag_autoscroll_step_for_active_drag(), 0.0);
+
+        state.set_drag_scroll_viewport(Some(DragScrollViewport {
+            content_top: 0.0,
+            content_height: 300.0,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+            scroll_position: 240.0,
+            max_scroll_position: 240.0,
+        }));
+        state.update_drag_selection(DragPoint::new(280.0, 296.0));
+        assert_eq!(state.drag_autoscroll_step_for_active_drag(), 0.0);
     }
 
     #[test]

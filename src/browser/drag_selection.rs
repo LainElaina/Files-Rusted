@@ -57,6 +57,8 @@ pub(super) struct DragScrollViewport {
     pub(super) content_height: f32,
     pub(super) hot_zone_size: f32,
     pub(super) max_speed: f32,
+    pub(super) scroll_position: f32,
+    pub(super) max_scroll_position: f32,
 }
 
 pub(super) fn compute_drag_autoscroll_delta(pointer_y: f32, viewport: DragScrollViewport) -> f32 {
@@ -216,6 +218,8 @@ mod tests {
             content_height: 400.0,
             hot_zone_size: 32.0,
             max_speed: 24.0,
+            scroll_position: 120.0,
+            max_scroll_position: 240.0,
         };
 
         assert_eq!(compute_drag_autoscroll_delta(132.0, viewport), 0.0);
@@ -231,6 +235,8 @@ mod tests {
             content_height: 400.0,
             hot_zone_size: 32.0,
             max_speed: 24.0,
+            scroll_position: 120.0,
+            max_scroll_position: 240.0,
         };
 
         assert_eq!(compute_drag_autoscroll_delta(-200.0, viewport), -24.0);
@@ -247,6 +253,8 @@ mod tests {
                     content_height: 0.0,
                     hot_zone_size: 32.0,
                     max_speed: 24.0,
+                    scroll_position: 0.0,
+                    max_scroll_position: 0.0,
                 },
             ),
             0.0
@@ -259,6 +267,8 @@ mod tests {
                     content_height: -1.0,
                     hot_zone_size: 32.0,
                     max_speed: 24.0,
+                    scroll_position: 0.0,
+                    max_scroll_position: 0.0,
                 },
             ),
             0.0
@@ -271,6 +281,8 @@ mod tests {
                     content_height: 400.0,
                     hot_zone_size: 0.0,
                     max_speed: 24.0,
+                    scroll_position: 0.0,
+                    max_scroll_position: 240.0,
                 },
             ),
             0.0
@@ -283,6 +295,8 @@ mod tests {
                     content_height: 400.0,
                     hot_zone_size: 32.0,
                     max_speed: 0.0,
+                    scroll_position: 0.0,
+                    max_scroll_position: 240.0,
                 },
             ),
             0.0
@@ -296,6 +310,8 @@ mod tests {
             content_height: 100.0,
             hot_zone_size: 80.0,
             max_speed: 24.0,
+            scroll_position: 20.0,
+            max_scroll_position: 80.0,
         };
 
         assert_eq!(compute_drag_autoscroll_delta(50.0, viewport), 0.0);
