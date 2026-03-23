@@ -312,6 +312,26 @@ export component AppWindow inherits Window {
     callback sort-mode-selected(int);
     callback filter-updated(string);
 
+    changed item-count => {
+        root.clear-visible-item-layouts();
+        if (root.item-count == 0) {
+            root.drag-scroll-position = 0;
+        }
+    }
+
+    changed file-items => {
+        root.clear-visible-item-layouts();
+        if (root.item-count == 0) {
+            root.drag-scroll-position = 0;
+        }
+    }
+
+    execute-drag-scroll(delta) => {
+        root.drag-scroll-delta = delta;
+        root.drag-scroll-position = Math.max(0, root.drag-scroll-position + delta);
+        root.clear-visible-item-layouts();
+    }
+
     forward-focus: key-handler;
 
     key-handler := FocusScope {

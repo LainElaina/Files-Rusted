@@ -933,9 +933,8 @@ impl BrowserState {
         *self.visible_item_layouts.borrow_mut() = layouts;
     }
 
-    pub fn clear_visible_item_layouts(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+    pub fn clear_visible_item_layouts(&self, _window: &AppWindow, _file_model: &VecModel<FileEntry>) {
         self.replace_visible_item_layouts(Vec::new());
-        self.apply_view(window, file_model);
     }
 
     pub fn register_visible_item_layout(
