@@ -108,7 +108,6 @@ pub(super) struct DragSelectionResult {
     pub(super) primary: Option<PathBuf>,
     pub(super) anchor: Option<PathBuf>,
     pub(super) rect: Option<DragRect>,
-    pub(super) active: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -139,7 +138,6 @@ impl DragSelectionSession {
                 primary: self.baseline.primary.clone(),
                 anchor: self.baseline.anchor.clone(),
                 rect: None,
-                active: false,
             };
         }
 
@@ -163,7 +161,6 @@ impl DragSelectionSession {
             primary,
             anchor,
             rect: Some(rect),
-            active: true,
         }
     }
 }
@@ -206,4 +203,105 @@ pub(super) fn toggle_drag_selection(
     }
 
     ordered
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autoscroll_has_exact_top_and_bottom_boundaries() {
+        let viewport = DragScrollViewport {
+            content_top: 100.0,
+            content_height: 400.0,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+        };
+
+        assert_eq!(compute_drag_autoscroll_delta(132.0, viewport), 0.0);
+        assert_eq!(compute_drag_autoscroll_delta(468.0, viewport), 0.0);
+        assert_eq!(compute_drag_autoscroll_delta(100.0, viewport), -24.0);
+        assert_eq!(compute_drag_autoscroll_delta(500.0, viewport), 24.0);
+    }
+
+    #[test]
+    fn autoscroll_clamps_to_max_speed_beyond_viewport_edges() {
+        let viewport = DragScrollViewport {
+            content_top: 100.0,
+            content_height: 400.0,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+        };
+
+        assert_eq!(compute_drag_autoscroll_delta(-200.0, viewport), -24.0);
+        assert_eq!(compute_drag_autoscroll_delta(900.0, viewport), 24.0);
+    }
+
+    #[test]
+    fn autoscroll_returns_zero_for_invalid_viewports() {
+        assert_eq!(
+            compute_drag_autoscroll_delta(
+                120.0,
+                DragScrollViewport {
+                    content_top: 100.0,
+                    content_height: 0.0,
+                    hot_zone_size: 32.0,
+                    max_speed: 24.0,
+                },
+            ),
+            0.0
+        );
+        assert_eq!(
+            compute_drag_autoscroll_delta(
+                120.0,
+                DragScrollViewport {
+                    content_top: 100.0,
+                    content_height: -1.0,
+                    hot_zone_size: 32.0,
+                    max_speed: 24.0,
+                },
+            ),
+            0.0
+        );
+        assert_eq!(
+            compute_drag_autoscroll_delta(
+                120.0,
+                DragScrollViewport {
+                    content_top: 100.0,
+                    content_height: 400.0,
+                    hot_zone_size: 0.0,
+                    max_speed: 24.0,
+                },
+            ),
+            0.0
+        );
+        assert_eq!(
+            compute_drag_autoscroll_delta(
+                120.0,
+                DragScrollViewport {
+                    content_top: 100.0,
+                    content_height: 400.0,
+                    hot_zone_size: 32.0,
+                    max_speed: 0.0,
+                },
+            ),
+            0.0
+        );
+    }
+
+    #[test]
+    fn autoscroll_clamps_hot_zone_to_half_height() {
+        let viewport = DragScrollViewport {
+            content_top: 0.0,
+            content_height: 100.0,
+            hot_zone_size: 80.0,
+            max_speed: 24.0,
+        };
+
+        assert_eq!(compute_drag_autoscroll_delta(50.0, viewport), 0.0);
+        assert_eq!(compute_drag_autoscroll_delta(25.0, viewport), -12.0);
+        assert_eq!(compute_drag_autoscroll_delta(75.0, viewport), 12.0);
+        assert_eq!(compute_drag_autoscroll_delta(-20.0, viewport), -24.0);
+        assert_eq!(compute_drag_autoscroll_delta(120.0, viewport), 24.0);
+    }
 }
