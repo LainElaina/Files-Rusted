@@ -1036,7 +1036,11 @@ impl BrowserState {
 
         let result = session.selection_for(point, &self.visible_item_layouts.borrow(), 4.0);
         *self.drag_selection_rect.borrow_mut() = result.rect;
-        self.compute_pending_drag_autoscroll(point);
+        if self.drag_selection_rect.borrow().is_some() {
+            self.compute_pending_drag_autoscroll(point);
+        } else {
+            *self.pending_drag_autoscroll.borrow_mut() = 0.0;
+        }
         self.selection_state
             .borrow_mut()
             .set_explicit_selection(result.selected, result.primary, result.anchor);
@@ -1932,6 +1936,32 @@ mod tests {
         assert_eq!(selection.selected_paths(), [path("a.txt")]);
         assert_eq!(selection.primary_selected_path().cloned(), Some(path("a.txt")));
         assert_eq!(selection.selection_anchor_path().cloned(), Some(path("a.txt")));
+    }
+
+    #[test]
+    fn browser_state_drag_update_does_not_request_autoscroll_before_threshold_even_in_hot_zones() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let layouts = vec![
+            layout("a.txt", 0.0, 0.0, 300.0, 84.0),
+            layout("b.txt", 0.0, 92.0, 300.0, 84.0),
+            layout("c.txt", 0.0, 184.0, 300.0, 84.0),
+        ];
+
+        state.replace_visible_item_layouts(layouts);
+        state.set_drag_scroll_viewport(Some(DragScrollViewport {
+            content_top: 0.0,
+            content_height: 300.0,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+        }));
+
+        state.begin_drag_selection(DragPoint::new(100.0, 2.0), false);
+        state.update_drag_selection(DragPoint::new(102.0, 3.0));
+        assert_eq!(state.pending_drag_autoscroll(), 0.0);
+
+        state.begin_drag_selection(DragPoint::new(100.0, 298.0), false);
+        state.update_drag_selection(DragPoint::new(102.0, 297.0));
+        assert_eq!(state.pending_drag_autoscroll(), 0.0);
     }
 
     #[test]
