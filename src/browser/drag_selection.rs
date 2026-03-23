@@ -51,6 +51,44 @@ impl DragRect {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct DragScrollViewport {
+    pub(super) content_top: f32,
+    pub(super) content_height: f32,
+    pub(super) hot_zone_size: f32,
+    pub(super) max_speed: f32,
+}
+
+pub(super) fn compute_drag_autoscroll_delta(pointer_y: f32, viewport: DragScrollViewport) -> f32 {
+    if viewport.content_height <= 0.0 || viewport.hot_zone_size <= 0.0 || viewport.max_speed <= 0.0 {
+        return 0.0;
+    }
+
+    let content_bottom = viewport.content_top + viewport.content_height;
+    let hot_zone = viewport
+        .hot_zone_size
+        .min(viewport.content_height / 2.0)
+        .max(0.0);
+
+    if hot_zone == 0.0 {
+        return 0.0;
+    }
+
+    let top_zone_end = viewport.content_top + hot_zone;
+    if pointer_y < top_zone_end {
+        let intensity = ((top_zone_end - pointer_y) / hot_zone).clamp(0.0, 1.0);
+        return -viewport.max_speed * intensity;
+    }
+
+    let bottom_zone_start = content_bottom - hot_zone;
+    if pointer_y > bottom_zone_start {
+        let intensity = ((pointer_y - bottom_zone_start) / hot_zone).clamp(0.0, 1.0);
+        return viewport.max_speed * intensity;
+    }
+
+    0.0
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct VisibleItemLayout {
     pub(super) path: PathBuf,

@@ -15,7 +15,8 @@ mod drag_selection;
 mod selection;
 
 use drag_selection::{
-    DragPoint, DragRect, DragSelectionSession, DragSelectionSnapshot, VisibleItemLayout,
+    compute_drag_autoscroll_delta, DragPoint, DragRect, DragScrollViewport, DragSelectionSession,
+    DragSelectionSnapshot, VisibleItemLayout,
 };
 use selection::{normalize_operation_paths, SelectionState};
 
@@ -1705,6 +1706,50 @@ fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drag_autoscroll_requests_upward_scroll_near_top_edge() {
+        let viewport = DragScrollViewport {
+            content_top: 100.0,
+            content_height: 400.0,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+        };
+
+        let delta = compute_drag_autoscroll_delta(108.0, viewport);
+
+        assert!(delta < 0.0);
+    }
+
+    #[test]
+    fn drag_autoscroll_requests_downward_scroll_near_bottom_edge() {
+        let viewport = DragScrollViewport {
+            content_top: 100.0,
+            content_height: 400.0,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+        };
+
+        let delta = compute_drag_autoscroll_delta(492.0, viewport);
+
+        assert!(delta > 0.0);
+    }
+
+    #[test]
+    fn drag_autoscroll_stops_outside_hot_zone() {
+        let viewport = DragScrollViewport {
+            content_top: 100.0,
+            content_height: 400.0,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+        };
+
+        let top_safe_delta = compute_drag_autoscroll_delta(133.0, viewport);
+        let bottom_safe_delta = compute_drag_autoscroll_delta(467.0, viewport);
+
+        assert_eq!(top_safe_delta, 0.0);
+        assert_eq!(bottom_safe_delta, 0.0);
+    }
 
     #[test]
     fn drag_selection_replaces_selection_without_modifiers() {
