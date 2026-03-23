@@ -1862,6 +1862,22 @@ mod tests {
     }
 
     #[test]
+    fn selection_state_ctrl_toggle_removal_from_multi_selection_keeps_focus_on_selected_item() {
+        let mut selection = SelectionState::default();
+
+        selection.set_explicit_selection(
+            vec![path("a.txt"), path("b.txt")],
+            Some(path("b.txt")),
+            Some(path("b.txt")),
+        );
+        selection.toggle_selection(path("b.txt"));
+
+        assert_eq!(selection.selected_paths(), [path("a.txt")]);
+        assert_eq!(selection.primary_selected_path().cloned(), Some(path("a.txt")));
+        assert_eq!(selection.selection_anchor_path().cloned(), Some(path("a.txt")));
+    }
+
+    #[test]
     fn selection_state_keeps_ctrl_workspace_click_behavior() {
         let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
 

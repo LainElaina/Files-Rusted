@@ -60,7 +60,12 @@ impl SelectionState {
             if selection.is_empty() {
                 self.set_explicit_selection(selection, None, None);
             } else {
-                self.set_explicit_selection(selection, Some(target.clone()), Some(target));
+                let fallback = selection[index.min(selection.len() - 1)].clone();
+                self.set_explicit_selection(
+                    selection,
+                    Some(fallback.clone()),
+                    Some(fallback),
+                );
             }
         } else {
             selection.push(target.clone());
