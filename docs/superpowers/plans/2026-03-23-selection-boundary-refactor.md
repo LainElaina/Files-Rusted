@@ -441,3 +441,13 @@ EOF
 ```
 
 If no docs changed, stage only the plan file.
+
+## Verification Checklist
+
+- [x] `cargo test`
+- [x] `cargo build`
+- [x] `xvfb-run -a ./target/debug/files-rusted`
+- [x] Confirm rectangle selection tests still pass
+- [x] Confirm plain empty-space click still clears selection
+- [x] Confirm `Ctrl +` empty-space click still keeps selection
+- [x] Confirm no behavior changes were required in the Slint UI layer
