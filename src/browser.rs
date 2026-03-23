@@ -9,10 +9,10 @@ use std::{
 
 use crate::{AppWindow, BreadcrumbEntry, FileEntry, SidebarEntry};
 
-#[path = "browser/selection.rs"]
-mod selection;
 #[path = "browser/drag_selection.rs"]
 mod drag_selection;
+#[path = "browser/selection.rs"]
+mod selection;
 
 use drag_selection::{
     DragPoint, DragRect, DragSelectionSession, DragSelectionSnapshot, VisibleItemLayout,
@@ -1907,18 +1907,16 @@ mod tests {
     }
 
     #[test]
-    fn selection_state_keeps_ctrl_workspace_click_behavior() {
+    fn browser_state_public_selection_flow_still_works_after_refactor() {
         let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
 
-        state.selection_state.borrow_mut().set_explicit_selection(
-            vec![path("a.txt")],
-            Some(path("a.txt")),
-            Some(path("a.txt")),
-        );
-        state.begin_drag_selection(DragPoint::new(10.0, 10.0), true);
-        state.finish_drag_selection();
+        state
+            .visible_paths
+            .borrow_mut()
+            .extend([path("a.txt"), path("b.txt"), path("c.txt")]);
 
-        assert!(state.selection_state.borrow().selected_paths() == [path("a.txt")]);
+        state.activate_file_selection(0, false, false);
+        assert_eq!(state.selection_state.borrow().selected_paths(), [path("a.txt")]);
         assert_eq!(
             state.selection_state.borrow().primary_selected_path().cloned(),
             Some(path("a.txt"))
@@ -1927,6 +1925,39 @@ mod tests {
             state.selection_state.borrow().selection_anchor_path().cloned(),
             Some(path("a.txt"))
         );
+
+        state.activate_file_selection(2, false, true);
+        assert_eq!(
+            state.selection_state.borrow().selected_paths(),
+            [path("a.txt"), path("b.txt"), path("c.txt")]
+        );
+        assert_eq!(
+            state.selection_state.borrow().primary_selected_path().cloned(),
+            Some(path("c.txt"))
+        );
+        assert_eq!(
+            state.selection_state.borrow().selection_anchor_path().cloned(),
+            Some(path("c.txt"))
+        );
+
+        state.activate_file_selection(1, true, false);
+        assert_eq!(
+            state.selection_state.borrow().selected_paths(),
+            [path("a.txt"), path("c.txt")]
+        );
+        assert_eq!(
+            state.selection_state.borrow().primary_selected_path().cloned(),
+            Some(path("c.txt"))
+        );
+        assert_eq!(
+            state.selection_state.borrow().selection_anchor_path().cloned(),
+            Some(path("c.txt"))
+        );
+
+        state.selection_state.borrow_mut().clear_selection();
+        assert!(state.selection_state.borrow().selected_paths().is_empty());
+        assert_eq!(state.selection_state.borrow().primary_selected_path().cloned(), None);
+        assert_eq!(state.selection_state.borrow().selection_anchor_path().cloned(), None);
     }
 
     fn path(name: &str) -> PathBuf {
