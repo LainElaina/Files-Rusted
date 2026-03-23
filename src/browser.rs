@@ -1,7 +1,6 @@
 use slint::{ModelRc, SharedString, VecModel};
 use std::{
     cell::RefCell,
-    collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -10,6 +9,16 @@ use std::{
 
 use crate::{AppWindow, BreadcrumbEntry, FileEntry, SidebarEntry};
 
+#[path = "browser/selection.rs"]
+mod selection;
+#[path = "browser/drag_selection.rs"]
+mod drag_selection;
+
+use drag_selection::{
+    DragPoint, DragRect, DragSelectionSession, DragSelectionSnapshot, VisibleItemLayout,
+};
+use selection::{normalize_operation_paths, SelectionState};
+
 pub struct BrowserState {
     current_dir: RefCell<PathBuf>,
     loaded_entries: RefCell<Vec<DirectoryEntry>>,
@@ -17,9 +26,7 @@ pub struct BrowserState {
     visible_item_layouts: RefCell<Vec<VisibleItemLayout>>,
     drag_selection_session: RefCell<Option<DragSelectionSession>>,
     drag_selection_rect: RefCell<Option<DragRect>>,
-    primary_selected_path: RefCell<Option<PathBuf>>,
-    selected_paths: RefCell<Vec<PathBuf>>,
-    selection_anchor_path: RefCell<Option<PathBuf>>,
+    selection_state: RefCell<SelectionState>,
     sort_mode: RefCell<SortMode>,
     filter_query: RefCell<String>,
     sidebar_paths: Vec<PathBuf>,
@@ -43,9 +50,7 @@ impl BrowserState {
                 visible_item_layouts: RefCell::new(Vec::new()),
                 drag_selection_session: RefCell::new(None),
                 drag_selection_rect: RefCell::new(None),
-                primary_selected_path: RefCell::new(None),
-                selected_paths: RefCell::new(Vec::new()),
-                selection_anchor_path: RefCell::new(None),
+                selection_state: RefCell::new(SelectionState::default()),
                 sort_mode: RefCell::new(SortMode::NameAsc),
                 filter_query: RefCell::new(String::new()),
                 sidebar_paths,
@@ -83,7 +88,7 @@ impl BrowserState {
             Err(error) => {
                 self.loaded_entries.borrow_mut().clear();
                 self.visible_paths.borrow_mut().clear();
-                self.clear_selection();
+                self.selection_state.borrow_mut().clear_selection();
                 file_model.set_vec(Vec::new());
 
                 self.update_breadcrumbs(window, &current_dir);
@@ -187,19 +192,27 @@ impl BrowserState {
         self.cancel_rename_internal();
 
         if shift {
-            self.select_range_to(target.clone(), control);
+            self.selection_state
+                .borrow_mut()
+                .select_range_to(&self.visible_paths.borrow(), target.clone(), control);
         } else if control {
-            self.toggle_selection(target.clone());
+            self.selection_state
+                .borrow_mut()
+                .toggle_selection(target.clone());
         } else {
-            self.set_single_selection(Some(target.clone()));
+            self.selection_state
+                .borrow_mut()
+                .set_single_selection(Some(target.clone()));
         }
 
-        self.ensure_selection_anchor(Some(target));
+        self.selection_state
+            .borrow_mut()
+            .ensure_selection_anchor(Some(target));
         self.apply_view(window, file_model);
     }
 
     pub fn open_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
-        let selected_paths = self.selected_items_for_operation();
+        let selected_paths = self.selection_state.borrow().selected_items_for_operation();
         if selected_paths.is_empty() {
             *self.status_override.borrow_mut() = Some("Nothing selected to open".to_string());
             self.apply_view(window, file_model);
@@ -242,8 +255,12 @@ impl BrowserState {
             return;
         };
 
-        self.set_single_selection(Some(target.clone()));
-        self.ensure_selection_anchor(Some(target.clone()));
+        self.selection_state
+            .borrow_mut()
+            .set_single_selection(Some(target.clone()));
+        self.selection_state
+            .borrow_mut()
+            .ensure_selection_anchor(Some(target.clone()));
         self.open_path(target, window, file_model);
     }
 
@@ -254,7 +271,9 @@ impl BrowserState {
         match fs::File::create(&target) {
             Ok(_) => {
                 self.cancel_rename_internal();
-                self.set_single_selection(Some(target.clone()));
+                self.selection_state
+                    .borrow_mut()
+                    .set_single_selection(Some(target.clone()));
                 *self.status_override.borrow_mut() =
                     Some(format!("Created file {}", item_name(&target)));
                 self.refresh(window, file_model);
@@ -275,7 +294,9 @@ impl BrowserState {
         match fs::create_dir(&target) {
             Ok(()) => {
                 self.cancel_rename_internal();
-                self.set_single_selection(Some(target.clone()));
+                self.selection_state
+                    .borrow_mut()
+                    .set_single_selection(Some(target.clone()));
                 *self.status_override.borrow_mut() =
                     Some(format!("Created folder {}", item_name(&target)));
                 self.refresh(window, file_model);
@@ -290,7 +311,7 @@ impl BrowserState {
     }
 
     pub fn request_rename_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
-        let selection = self.selected_items_for_operation();
+        let selection = self.selection_state.borrow().selected_items_for_operation();
         if selection.len() != 1 {
             *self.status_override.borrow_mut() =
                 Some("Rename requires exactly one selected item".to_string());
@@ -318,7 +339,9 @@ impl BrowserState {
         file_model: &VecModel<FileEntry>,
     ) {
         if let Some(target) = self.path_at_visible_index(index) {
-            self.set_single_selection(Some(target));
+            self.selection_state
+                .borrow_mut()
+                .set_single_selection(Some(target));
             self.request_rename_selected(window, file_model);
         }
     }
@@ -328,7 +351,7 @@ impl BrowserState {
     }
 
     pub fn request_copy_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
-        let selected = self.selected_items_for_operation();
+        let selected = self.selection_state.borrow().selected_items_for_operation();
         if selected.is_empty() {
             *self.status_override.borrow_mut() = Some("Select an item before copying".to_string());
             self.apply_view(window, file_model);
@@ -346,7 +369,7 @@ impl BrowserState {
     }
 
     pub fn request_cut_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
-        let selected = self.selected_items_for_operation();
+        let selected = self.selection_state.borrow().selected_items_for_operation();
         if selected.is_empty() {
             *self.status_override.borrow_mut() = Some("Select an item before cutting".to_string());
             self.apply_view(window, file_model);
@@ -370,7 +393,9 @@ impl BrowserState {
         file_model: &VecModel<FileEntry>,
     ) {
         if let Some(target) = self.path_at_visible_index(index) {
-            self.set_single_selection(Some(target));
+            self.selection_state
+                .borrow_mut()
+                .set_single_selection(Some(target));
             self.request_copy_selected(window, file_model);
         }
     }
@@ -382,7 +407,9 @@ impl BrowserState {
         file_model: &VecModel<FileEntry>,
     ) {
         if let Some(target) = self.path_at_visible_index(index) {
-            self.set_single_selection(Some(target));
+            self.selection_state
+                .borrow_mut()
+                .set_single_selection(Some(target));
             self.request_cut_selected(window, file_model);
         }
     }
@@ -460,7 +487,7 @@ impl BrowserState {
         }
 
         self.cancel_rename_internal();
-        self.set_explicit_selection(
+        self.selection_state.borrow_mut().set_explicit_selection(
             pasted_paths.clone(),
             pasted_paths.last().cloned(),
             pasted_paths.last().cloned(),
@@ -484,7 +511,7 @@ impl BrowserState {
     }
 
     pub fn commit_rename(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
-        let selection = self.selected_items_for_operation();
+        let selection = self.selection_state.borrow().selected_items_for_operation();
         if selection.len() != 1 {
             *self.status_override.borrow_mut() =
                 Some("Rename requires exactly one selected item".to_string());
@@ -534,7 +561,9 @@ impl BrowserState {
         match fs::rename(&path, &new_path) {
             Ok(()) => {
                 self.cancel_rename_internal();
-                self.set_single_selection(Some(new_path.clone()));
+                self.selection_state
+                    .borrow_mut()
+                    .set_single_selection(Some(new_path.clone()));
                 *self.status_override.borrow_mut() =
                     Some(format!("Renamed to {}", item_name(&new_path)));
                 self.refresh(window, file_model);
@@ -553,7 +582,7 @@ impl BrowserState {
     }
 
     pub fn delete_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
-        let selected = self.selected_items_for_operation();
+        let selected = self.selection_state.borrow().selected_items_for_operation();
         if selected.is_empty() {
             *self.status_override.borrow_mut() = Some("Nothing selected to delete".to_string());
             self.apply_view(window, file_model);
@@ -641,15 +670,21 @@ impl BrowserState {
         self.cancel_rename_internal();
 
         if extend {
-            self.select_range_to(target.clone(), control);
+            self.selection_state
+                .borrow_mut()
+                .select_range_to(&self.visible_paths.borrow(), target.clone(), control);
         } else if control {
-            self.set_focus_only(Some(target.clone()));
+            self.selection_state.borrow_mut().set_focus_only(Some(target.clone()));
         } else {
-            self.set_single_selection(Some(target.clone()));
+            self.selection_state
+                .borrow_mut()
+                .set_single_selection(Some(target.clone()));
         }
 
         if !control || extend {
-            self.ensure_selection_anchor(Some(target));
+            self.selection_state
+            .borrow_mut()
+            .ensure_selection_anchor(Some(target));
         }
         self.apply_view(window, file_model);
     }
@@ -661,16 +696,19 @@ impl BrowserState {
         }
 
         let primary = self
-            .primary_selected_path
+            .selection_state
             .borrow()
-            .clone()
+            .primary_selected_path()
             .filter(|path| visible_paths.contains(path))
+            .cloned()
             .or_else(|| visible_paths.first().cloned());
         let anchor = visible_paths.first().cloned();
 
         self.cancel_rename_internal();
         self.clear_status_override();
-        self.set_explicit_selection(visible_paths, primary, anchor);
+        self.selection_state
+            .borrow_mut()
+            .set_explicit_selection(visible_paths, primary, anchor);
         self.apply_view(window, file_model);
     }
 
@@ -681,7 +719,7 @@ impl BrowserState {
     ) {
         self.clear_status_override();
         self.cancel_rename_internal();
-        self.clear_selection();
+        self.selection_state.borrow_mut().clear_selection();
         self.apply_view(window, file_model);
     }
 
@@ -692,7 +730,7 @@ impl BrowserState {
         window: &AppWindow,
         file_model: &VecModel<FileEntry>,
     ) {
-        let focused = self.primary_selected_path.borrow().clone();
+        let focused = self.selection_state.borrow().primary_selected_path().cloned();
         let Some(target) = focused else {
             return;
         };
@@ -701,12 +739,18 @@ impl BrowserState {
         self.cancel_rename_internal();
 
         if extend {
-            self.select_range_to(target.clone(), control);
+            self.selection_state
+                .borrow_mut()
+                .select_range_to(&self.visible_paths.borrow(), target.clone(), control);
         } else if control {
-            self.toggle_selection(target);
+            self.selection_state.borrow_mut().toggle_selection(target);
         } else {
-            self.set_single_selection(Some(target.clone()));
-            self.ensure_selection_anchor(Some(target));
+            self.selection_state
+                .borrow_mut()
+                .set_single_selection(Some(target.clone()));
+            self.selection_state
+            .borrow_mut()
+            .ensure_selection_anchor(Some(target));
         }
 
         self.apply_view(window, file_model);
@@ -734,7 +778,7 @@ impl BrowserState {
 
         self.clear_status_override();
         self.cancel_rename_internal();
-        self.clear_selection();
+        self.selection_state.borrow_mut().clear_selection();
         *self.current_dir.borrow_mut() = target;
         self.refresh(window, file_model);
     }
@@ -746,7 +790,13 @@ impl BrowserState {
         let loaded_entries = self.loaded_entries.borrow();
         let total_count = loaded_entries.len() as i32;
 
-        self.reconcile_selection(&loaded_entries);
+        let loaded_paths = loaded_entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        self.selection_state
+            .borrow_mut()
+            .reconcile_selection(&loaded_paths);
 
         let effective_filter = filter_query.trim().to_lowercase();
         let mut visible_entries = loaded_entries
@@ -765,11 +815,11 @@ impl BrowserState {
             .collect::<Vec<_>>();
         let visible_count = visible_paths.len() as i32;
 
-        let primary_selected = self.primary_selected_path.borrow().clone();
-        let selected_paths = self.selected_paths.borrow().clone();
-        let selected_lookup = selected_paths.iter().cloned().collect::<HashSet<_>>();
+        let primary_selected = self.selection_state.borrow().primary_selected_path().cloned();
+        let selected_paths = self.selection_state.borrow().selected_paths().to_vec();
+        let selected_lookup = selected_paths.iter().cloned().collect::<std::collections::HashSet<_>>();
         let selected_count = selected_paths.len();
-        let operation_paths = self.selected_items_for_operation();
+        let operation_paths = self.selection_state.borrow().selected_items_for_operation();
         let operation_count = operation_paths.len();
 
         let focused_index = primary_selected
@@ -861,9 +911,9 @@ impl BrowserState {
 
     fn drag_snapshot(&self) -> DragSelectionSnapshot {
         DragSelectionSnapshot {
-            selected: self.selected_paths.borrow().clone(),
-            primary: self.primary_selected_path.borrow().clone(),
-            anchor: self.selection_anchor_path.borrow().clone(),
+            selected: self.selection_state.borrow().selected_paths().to_vec(),
+            primary: self.selection_state.borrow().primary_selected_path().cloned(),
+            anchor: self.selection_state.borrow().selection_anchor_path().cloned(),
         }
     }
 
@@ -953,7 +1003,9 @@ impl BrowserState {
 
         let result = session.selection_for(point, &self.visible_item_layouts.borrow(), 4.0);
         *self.drag_selection_rect.borrow_mut() = result.rect;
-        self.set_explicit_selection(result.selected, result.primary, result.anchor);
+        self.selection_state
+            .borrow_mut()
+            .set_explicit_selection(result.selected, result.primary, result.anchor);
     }
 
     fn finish_drag_selection(&self) {
@@ -964,13 +1016,13 @@ impl BrowserState {
 
         if self.drag_selection_rect.borrow().is_none() {
             if session.control {
-                self.set_explicit_selection(
+                self.selection_state.borrow_mut().set_explicit_selection(
                     session.baseline.selected,
                     session.baseline.primary,
                     session.baseline.anchor,
                 );
             } else {
-                self.clear_selection();
+                self.selection_state.borrow_mut().clear_selection();
             }
         }
 
@@ -1040,7 +1092,7 @@ impl BrowserState {
         }
 
         self.cancel_rename_internal();
-        self.clear_selection();
+        self.selection_state.borrow_mut().clear_selection();
         *self.status_override.borrow_mut() = Some(if failures == 0 {
             format!("Deleted {}", format_item_count(deleted))
         } else {
@@ -1063,9 +1115,9 @@ impl BrowserState {
         }
 
         let current_index = self
-            .primary_selected_path
+            .selection_state
             .borrow()
-            .as_ref()
+            .primary_selected_path()
             .and_then(|path| visible.iter().position(|candidate| candidate == path))
             .map(|index| index as i32)
             .unwrap_or(if delta >= 0 { -1 } else { visible.len() as i32 });
@@ -1077,143 +1129,23 @@ impl BrowserState {
         self.cancel_rename_internal();
 
         if extend {
-            self.select_range_to(target.clone(), control);
+            self.selection_state
+                .borrow_mut()
+                .select_range_to(&self.visible_paths.borrow(), target.clone(), control);
         } else if control {
-            self.set_focus_only(Some(target.clone()));
+            self.selection_state.borrow_mut().set_focus_only(Some(target.clone()));
         } else {
-            self.set_single_selection(Some(target.clone()));
+            self.selection_state
+                .borrow_mut()
+                .set_single_selection(Some(target.clone()));
         }
 
         if !control || extend {
-            self.ensure_selection_anchor(Some(target));
+            self.selection_state
+            .borrow_mut()
+            .ensure_selection_anchor(Some(target));
         }
         self.apply_view(window, file_model);
-    }
-
-    fn select_range_to(&self, target: PathBuf, union_existing: bool) {
-        let visible = self.visible_paths.borrow().clone();
-        let anchor = self
-            .selection_anchor_path
-            .borrow()
-            .clone()
-            .or_else(|| self.primary_selected_path.borrow().clone())
-            .unwrap_or_else(|| target.clone());
-
-        let anchor_index = visible.iter().position(|path| *path == anchor);
-        let target_index = visible.iter().position(|path| *path == target);
-
-        let Some(anchor_index) = anchor_index else {
-            self.set_single_selection(Some(target.clone()));
-            return;
-        };
-        let Some(target_index) = target_index else {
-            self.set_single_selection(Some(target.clone()));
-            return;
-        };
-
-        let (start, end) = if anchor_index <= target_index {
-            (anchor_index, target_index)
-        } else {
-            (target_index, anchor_index)
-        };
-
-        let mut selection = visible[start..=end].to_vec();
-        if union_existing {
-            selection.extend(self.selected_paths.borrow().iter().cloned());
-        }
-
-        self.set_explicit_selection(selection, Some(target), Some(anchor));
-    }
-
-    fn toggle_selection(&self, target: PathBuf) {
-        let mut selection = self.selected_paths.borrow().clone();
-        if let Some(index) = selection.iter().position(|path| *path == target) {
-            selection.remove(index);
-            self.set_explicit_selection(selection, Some(target.clone()), Some(target));
-        } else {
-            selection.push(target.clone());
-            self.set_explicit_selection(selection, Some(target.clone()), Some(target));
-        }
-    }
-
-    fn set_single_selection(&self, path: Option<PathBuf>) {
-        match path {
-            Some(path) => self.set_explicit_selection(vec![path.clone()], Some(path.clone()), Some(path)),
-            None => self.clear_selection(),
-        }
-    }
-
-    fn set_explicit_selection(
-        &self,
-        paths: Vec<PathBuf>,
-        primary: Option<PathBuf>,
-        anchor: Option<PathBuf>,
-    ) {
-        let mut unique = Vec::new();
-        for path in paths {
-            if !unique.iter().any(|existing| existing == &path) {
-                unique.push(path);
-            }
-        }
-
-        *self.selected_paths.borrow_mut() = unique;
-        *self.primary_selected_path.borrow_mut() = primary;
-        *self.selection_anchor_path.borrow_mut() = anchor;
-    }
-
-    fn reconcile_selection(&self, loaded_entries: &[DirectoryEntry]) {
-        let existing_paths = loaded_entries
-            .iter()
-            .map(|entry| entry.path.clone())
-            .collect::<HashSet<_>>();
-
-        let selection = self
-            .selected_paths
-            .borrow()
-            .iter()
-            .filter(|path| existing_paths.contains(*path))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let primary = self
-            .primary_selected_path
-            .borrow()
-            .clone()
-            .filter(|path| existing_paths.contains(path));
-        let anchor = self
-            .selection_anchor_path
-            .borrow()
-            .clone()
-            .filter(|path| existing_paths.contains(path));
-
-        self.set_explicit_selection(selection, primary, anchor);
-    }
-
-    fn ensure_selection_anchor(&self, anchor: Option<PathBuf>) {
-        *self.selection_anchor_path.borrow_mut() = anchor;
-    }
-
-    fn clear_selection(&self) {
-        self.selected_paths.borrow_mut().clear();
-        self.primary_selected_path.borrow_mut().take();
-        self.selection_anchor_path.borrow_mut().take();
-    }
-
-    fn selected_items_for_operation(&self) -> Vec<PathBuf> {
-        let selected = self.selected_paths.borrow().clone();
-        if !selected.is_empty() {
-            return normalize_operation_paths(selected);
-        }
-
-        self.primary_selected_path
-            .borrow()
-            .clone()
-            .map(|path| vec![path])
-            .unwrap_or_default()
-    }
-
-    fn set_focus_only(&self, path: Option<PathBuf>) {
-        *self.primary_selected_path.borrow_mut() = path;
     }
 
     fn cancel_rename_internal(&self) {
@@ -1355,176 +1287,6 @@ struct TransferOperation {
 enum TransferKind {
     Copy,
     Cut,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct DragPoint {
-    x: f32,
-    y: f32,
-}
-
-impl DragPoint {
-    fn new(x: f32, y: f32) -> Self {
-        Self { x, y }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct DragRect {
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-}
-
-impl DragRect {
-    fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self {
-            x,
-            y,
-            width,
-            height,
-        }
-    }
-
-    fn from_points(start: DragPoint, end: DragPoint) -> Self {
-        let left = start.x.min(end.x);
-        let top = start.y.min(end.y);
-        let right = start.x.max(end.x);
-        let bottom = start.y.max(end.y);
-        Self::new(left, top, right - left, bottom - top)
-    }
-
-    fn intersects(self, other: Self) -> bool {
-        let self_right = self.x + self.width;
-        let self_bottom = self.y + self.height;
-        let other_right = other.x + other.width;
-        let other_bottom = other.y + other.height;
-
-        self.x < other_right
-            && self_right > other.x
-            && self.y < other_bottom
-            && self_bottom > other.y
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct VisibleItemLayout {
-    path: PathBuf,
-    rect: DragRect,
-}
-
-#[derive(Clone, Debug)]
-struct DragSelectionSnapshot {
-    selected: Vec<PathBuf>,
-    primary: Option<PathBuf>,
-    anchor: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct DragSelectionResult {
-    selected: Vec<PathBuf>,
-    primary: Option<PathBuf>,
-    anchor: Option<PathBuf>,
-    rect: Option<DragRect>,
-    active: bool,
-}
-
-#[derive(Clone, Debug)]
-struct DragSelectionSession {
-    start: DragPoint,
-    control: bool,
-    baseline: DragSelectionSnapshot,
-}
-
-impl DragSelectionSession {
-    fn begin(start: DragPoint, control: bool, baseline: DragSelectionSnapshot) -> Self {
-        Self {
-            start,
-            control,
-            baseline,
-        }
-    }
-
-    fn selection_for(
-        &self,
-        current: DragPoint,
-        layouts: &[VisibleItemLayout],
-        threshold: f32,
-    ) -> DragSelectionResult {
-        if drag_distance(self.start, current) < threshold {
-            return DragSelectionResult {
-                selected: self.baseline.selected.clone(),
-                primary: self.baseline.primary.clone(),
-                anchor: self.baseline.anchor.clone(),
-                rect: None,
-                active: false,
-            };
-        }
-
-        let rect = DragRect::from_points(self.start, current);
-        let hit_paths = layouts
-            .iter()
-            .filter(|layout| rect.intersects(layout.rect))
-            .map(|layout| layout.path.clone())
-            .collect::<Vec<_>>();
-
-        let selected = if self.control {
-            toggle_drag_selection(&self.baseline.selected, &hit_paths, layouts)
-        } else {
-            hit_paths.clone()
-        };
-        let primary = hit_paths.last().cloned();
-        let anchor = primary.clone();
-
-        DragSelectionResult {
-            selected,
-            primary,
-            anchor,
-            rect: Some(rect),
-            active: true,
-        }
-    }
-}
-
-fn drag_distance(start: DragPoint, end: DragPoint) -> f32 {
-    let delta_x = end.x - start.x;
-    let delta_y = end.y - start.y;
-    (delta_x * delta_x + delta_y * delta_y).sqrt()
-}
-
-fn toggle_drag_selection(
-    baseline: &[PathBuf],
-    hits: &[PathBuf],
-    layouts: &[VisibleItemLayout],
-) -> Vec<PathBuf> {
-    let mut toggled = baseline.to_vec();
-    for hit in hits {
-        if let Some(index) = toggled.iter().position(|path| path == hit) {
-            toggled.remove(index);
-        } else {
-            toggled.push(hit.clone());
-        }
-    }
-
-    let mut ordered = layouts
-        .iter()
-        .filter_map(|layout| {
-            toggled
-                .iter()
-                .any(|path| path == &layout.path)
-                .then(|| layout.path.clone())
-        })
-        .collect::<Vec<_>>();
-
-    for path in toggled {
-        if ordered.iter().any(|existing| existing == &path) {
-            continue;
-        }
-        ordered.push(path);
-    }
-
-    ordered
 }
 
 fn build_sidebar_entries(start_dir: &Path) -> (Vec<SidebarEntry>, Vec<PathBuf>) {
@@ -1907,28 +1669,6 @@ fn spawn_detached(mut command: Command) -> std::io::Result<()> {
         .map(|_| ())
 }
 
-fn normalize_operation_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut unique = Vec::new();
-    for path in paths {
-        if unique.iter().any(|existing| existing == &path) {
-            continue;
-        }
-        unique.push(path);
-    }
-
-    let mut normalized = Vec::new();
-    for path in unique {
-        if normalized.iter().any(|existing: &PathBuf| path.starts_with(existing)) {
-            continue;
-        }
-
-        normalized.retain(|existing| !existing.starts_with(&path));
-        normalized.push(path);
-    }
-
-    normalized
-}
-
 fn format_item_count(count: usize) -> String {
     if count == 1 {
         "1 item".to_string()
@@ -2002,6 +1742,27 @@ mod tests {
     }
 
     #[test]
+    fn drag_selection_module_keeps_control_toggle_behavior() {
+        let baseline = drag_snapshot(
+            vec![path("a.txt"), path("c.txt")],
+            Some(path("c.txt")),
+            Some(path("c.txt")),
+        );
+        let session = DragSelectionSession::begin(DragPoint::new(0.0, 0.0), true, baseline);
+        let layouts = vec![
+            layout("a.txt", 0.0, 0.0, 300.0, 84.0),
+            layout("b.txt", 0.0, 92.0, 300.0, 84.0),
+            layout("c.txt", 0.0, 184.0, 300.0, 84.0),
+        ];
+
+        let result = session.selection_for(DragPoint::new(280.0, 150.0), &layouts, 4.0);
+
+        assert_eq!(result.selected, vec![path("b.txt"), path("c.txt")]);
+        assert_eq!(result.primary, Some(path("b.txt")));
+        assert_eq!(result.anchor, Some(path("b.txt")));
+    }
+
+    #[test]
     fn drag_selection_clears_selection_when_rectangle_hits_nothing() {
         let base = drag_snapshot(
             vec![path("a.txt")],
@@ -2032,9 +1793,18 @@ mod tests {
         state.update_drag_selection(DragPoint::new(280.0, 150.0));
         state.finish_drag_selection();
 
-        assert_eq!(*state.selected_paths.borrow(), vec![path("a.txt"), path("b.txt")]);
-        assert_eq!(*state.primary_selected_path.borrow(), Some(path("b.txt")));
-        assert_eq!(*state.selection_anchor_path.borrow(), Some(path("b.txt")));
+        assert_eq!(
+            state.selection_state.borrow().selected_paths(),
+            [path("a.txt"), path("b.txt")]
+        );
+        assert_eq!(
+            state.selection_state.borrow().primary_selected_path().cloned(),
+            Some(path("b.txt"))
+        );
+        assert_eq!(
+            state.selection_state.borrow().selection_anchor_path().cloned(),
+            Some(path("b.txt"))
+        );
         assert!(state.drag_selection_session.borrow().is_none());
     }
 
@@ -2042,7 +1812,7 @@ mod tests {
     fn browser_state_plain_workspace_click_without_drag_clears_selection() {
         let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
 
-        state.set_explicit_selection(
+        state.selection_state.borrow_mut().set_explicit_selection(
             vec![path("a.txt")],
             Some(path("a.txt")),
             Some(path("a.txt")),
@@ -2050,9 +1820,9 @@ mod tests {
         state.begin_drag_selection(DragPoint::new(10.0, 10.0), false);
         state.finish_drag_selection();
 
-        assert!(state.selected_paths.borrow().is_empty());
-        assert_eq!(*state.primary_selected_path.borrow(), None);
-        assert_eq!(*state.selection_anchor_path.borrow(), None);
+        assert!(state.selection_state.borrow().selected_paths().is_empty());
+        assert_eq!(state.selection_state.borrow().primary_selected_path().cloned(), None);
+        assert_eq!(state.selection_state.borrow().selection_anchor_path().cloned(), None);
     }
 
     #[test]
@@ -2064,7 +1834,7 @@ mod tests {
             layout("c.txt", 0.0, 184.0, 300.0, 84.0),
         ];
 
-        state.set_explicit_selection(
+        state.selection_state.borrow_mut().set_explicit_selection(
             vec![path("a.txt"), path("c.txt")],
             Some(path("c.txt")),
             Some(path("c.txt")),
@@ -2074,14 +1844,17 @@ mod tests {
         state.update_drag_selection(DragPoint::new(280.0, 150.0));
         state.finish_drag_selection();
 
-        assert_eq!(*state.selected_paths.borrow(), vec![path("b.txt"), path("c.txt")]);
+        assert_eq!(
+            state.selection_state.borrow().selected_paths(),
+            [path("b.txt"), path("c.txt")]
+        );
     }
 
     #[test]
-    fn browser_state_control_workspace_click_without_drag_keeps_selection() {
+    fn selection_state_keeps_ctrl_workspace_click_behavior() {
         let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
 
-        state.set_explicit_selection(
+        state.selection_state.borrow_mut().set_explicit_selection(
             vec![path("a.txt")],
             Some(path("a.txt")),
             Some(path("a.txt")),
@@ -2089,9 +1862,15 @@ mod tests {
         state.begin_drag_selection(DragPoint::new(10.0, 10.0), true);
         state.finish_drag_selection();
 
-        assert_eq!(*state.selected_paths.borrow(), vec![path("a.txt")]);
-        assert_eq!(*state.primary_selected_path.borrow(), Some(path("a.txt")));
-        assert_eq!(*state.selection_anchor_path.borrow(), Some(path("a.txt")));
+        assert!(state.selection_state.borrow().selected_paths() == [path("a.txt")]);
+        assert_eq!(
+            state.selection_state.borrow().primary_selected_path().cloned(),
+            Some(path("a.txt"))
+        );
+        assert_eq!(
+            state.selection_state.borrow().selection_anchor_path().cloned(),
+            Some(path("a.txt"))
+        );
     }
 
     fn path(name: &str) -> PathBuf {
