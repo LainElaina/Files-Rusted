@@ -184,6 +184,11 @@ impl BrowserState {
         window: &AppWindow,
         file_model: &VecModel<FileEntry>,
     ) {
+        self.activate_file_selection(index, control, shift);
+        self.apply_view(window, file_model);
+    }
+
+    fn activate_file_selection(&self, index: i32, control: bool, shift: bool) {
         let Some(target) = self.path_at_visible_index(index) else {
             return;
         };
@@ -205,11 +210,13 @@ impl BrowserState {
                 .set_single_selection(Some(target.clone()));
         }
 
-        self.selection_state
-            .borrow_mut()
-            .ensure_selection_anchor(Some(target));
-        self.apply_view(window, file_model);
+        if !control || shift || self.selection_state.borrow().primary_selected_path().is_some() {
+            self.selection_state
+                .borrow_mut()
+                .ensure_selection_anchor(Some(target));
+        }
     }
+
 
     pub fn open_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         let selected_paths = self.selection_state.borrow().selected_items_for_operation();
@@ -1827,6 +1834,20 @@ mod tests {
             state.selection_state.borrow().selected_paths(),
             [path("b.txt"), path("c.txt")]
         );
+    }
+
+    #[test]
+    fn selection_state_ctrl_toggle_last_selected_item_via_activate_file_clears_anchor() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        state.visible_paths.borrow_mut().push(path("a.txt"));
+
+        state.activate_file_selection(0, false, false);
+        state.activate_file_selection(0, true, false);
+
+        assert!(state.selection_state.borrow().selected_paths().is_empty());
+        assert_eq!(state.selection_state.borrow().primary_selected_path().cloned(), None);
+        assert_eq!(state.selection_state.borrow().selection_anchor_path().cloned(), None);
     }
 
     #[test]
