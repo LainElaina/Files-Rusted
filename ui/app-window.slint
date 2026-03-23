@@ -264,6 +264,8 @@ export component AppWindow inherits Window {
     in-out property<float> drag-selection-y: 0;
     in-out property<float> drag-selection-width: 0;
     in-out property<float> drag-selection-height: 0;
+    in-out property<float> drag-scroll-delta: 0;
+    in-out property<float> drag-scroll-position: 0;
     in-out property<[SidebarEntry]> sidebar-items;
     in-out property<[FileEntry]> file-items;
     in-out property<[BreadcrumbEntry]> breadcrumb-items;
@@ -305,6 +307,8 @@ export component AppWindow inherits Window {
     callback finish-drag-selection();
     callback clear-visible-item-layouts();
     callback register-visible-item-layout(int, float, float, float, float);
+    callback update-drag-scroll-viewport(float, float);
+    callback execute-drag-scroll(float);
     callback sort-mode-selected(int);
     callback filter-updated(string);
 
@@ -929,9 +933,20 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    ListView {
+                    file-list := ListView {
                         width: parent.width;
                         height: parent.height;
+                        viewport-y: root.drag-scroll-position * 1px;
+
+                        changed y => {
+                            root.update-drag-scroll-viewport(self.y / 1px, self.height / 1px);
+                        }
+                        changed height => {
+                            root.update-drag-scroll-viewport(self.y / 1px, self.height / 1px);
+                        }
+                        changed viewport-y => {
+                            root.update-drag-scroll-viewport(self.y / 1px, self.height / 1px);
+                        }
 
                         for entry[i] in root.file-items : FileCard {
                             width: parent.width;

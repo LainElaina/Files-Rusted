@@ -999,6 +999,22 @@ impl BrowserState {
         self.drag_selection_session.borrow().is_some()
     }
 
+    pub fn set_drag_scroll_viewport_from_ui(&self, content_top: f32, content_height: f32) {
+        self.set_drag_scroll_viewport(Some(DragScrollViewport {
+            content_top,
+            content_height,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+        }));
+    }
+
+    pub fn take_pending_drag_autoscroll(&self) -> f32 {
+        let mut pending = self.pending_drag_autoscroll.borrow_mut();
+        let delta = *pending;
+        *pending = 0.0;
+        delta
+    }
+
     fn set_drag_scroll_viewport(&self, viewport: Option<DragScrollViewport>) {
         *self.drag_scroll_viewport.borrow_mut() = viewport;
         if viewport.is_none() {
@@ -1006,6 +1022,7 @@ impl BrowserState {
         }
     }
 
+    #[cfg(test)]
     pub fn pending_drag_autoscroll(&self) -> f32 {
         *self.pending_drag_autoscroll.borrow()
     }
@@ -1985,6 +2002,43 @@ mod tests {
         state.update_drag_selection(DragPoint::new(280.0, 295.0));
 
         assert!(state.pending_drag_autoscroll() > 0.0);
+    }
+
+    #[test]
+    fn browser_state_drag_autoscroll_preserves_ctrl_drag_baseline_behavior() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let layouts = vec![
+            layout("a.txt", 0.0, 0.0, 300.0, 84.0),
+            layout("b.txt", 0.0, 92.0, 300.0, 84.0),
+            layout("c.txt", 0.0, 184.0, 300.0, 84.0),
+        ];
+
+        state.selection_state.borrow_mut().set_explicit_selection(
+            vec![path("a.txt"), path("c.txt")],
+            Some(path("c.txt")),
+            Some(path("c.txt")),
+        );
+        state.replace_visible_item_layouts(layouts);
+        state.set_drag_scroll_viewport(Some(DragScrollViewport {
+            content_top: 0.0,
+            content_height: 300.0,
+            hot_zone_size: 32.0,
+            max_speed: 24.0,
+        }));
+
+        state.begin_drag_selection(DragPoint::new(0.0, 120.0), true);
+        state.update_drag_selection(DragPoint::new(280.0, 295.0));
+
+        let requested = state.take_pending_drag_autoscroll();
+        assert!(requested > 0.0);
+
+        state.finish_drag_selection();
+
+        assert_eq!(
+            state.selection_state.borrow().selected_paths(),
+            [path("a.txt"), path("b.txt")]
+        );
+        assert_eq!(state.pending_drag_autoscroll(), 0.0);
     }
 
     #[test]

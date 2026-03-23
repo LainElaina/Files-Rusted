@@ -275,12 +275,23 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
+        let state = state.clone();
+        window.on_update_drag_scroll_viewport(move |content_top, content_height| {
+            state.set_drag_scroll_viewport_from_ui(content_top, content_height);
+        });
+    }
+
+    {
         let window_weak = window.as_weak();
         let state = state.clone();
         let file_model = file_model.clone();
         window.on_update_drag_selection(move |x, y| {
             if let Some(window) = window_weak.upgrade() {
                 state.update_drag_selection_from_ui(x, y, &window, file_model.as_ref());
+                let delta = state.take_pending_drag_autoscroll();
+                if delta != 0.0 {
+                    window.invoke_execute_drag_scroll(delta);
+                }
             }
         });
     }
