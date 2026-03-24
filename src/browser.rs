@@ -809,8 +809,7 @@ impl BrowserState {
         self.refresh(window, file_model);
     }
 
-    fn apply_view(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
-        let current_dir = self.current_dir.borrow().clone();
+    fn derived_view_for_apply(&self) -> view::BrowserViewData {
         let filter_query = self.filter_query.borrow().clone();
         let sort_mode = *self.sort_mode.borrow();
         let rename_mode = *self.rename_mode.borrow();
@@ -832,6 +831,16 @@ impl BrowserState {
         if let Some(status_override) = self.status_override.borrow().clone() {
             derived.status_text = SharedString::from(status_override);
         }
+
+        derived
+    }
+
+    fn apply_view(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        let current_dir = self.current_dir.borrow().clone();
+        let filter_query = self.filter_query.borrow().clone();
+        let sort_mode = *self.sort_mode.borrow();
+
+        let derived = self.derived_view_for_apply();
 
         *self.visible_paths.borrow_mut() = derived.visible_paths;
         file_model.set_vec(derived.file_rows);
@@ -1846,6 +1855,33 @@ mod tests {
         }));
         state.update_drag_selection(DragPoint::new(280.0, 296.0));
         assert_eq!(state.drag_autoscroll_step_for_active_drag(), 0.0);
+    }
+
+    #[test]
+    fn browser_state_apply_view_uses_extracted_view_builder() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        state.loaded_entries.borrow_mut().extend([
+            directory_entry("/workspace/alpha.txt", false, 10),
+            directory_entry("/workspace/beta.txt", false, 20),
+        ]);
+        *state.filter_query.borrow_mut() = "alpha".to_string();
+        state
+            .selection_state
+            .borrow_mut()
+            .set_single_selection(Some(PathBuf::from("/workspace/beta.txt")));
+
+        let view = state.derived_view_for_apply();
+
+        assert_eq!(view.visible_paths, vec![PathBuf::from("/workspace/alpha.txt")]);
+        assert_eq!(
+            view.selection_text.as_str(),
+            "Selected file: beta.txt (hidden by filter)"
+        );
+        assert_eq!(
+            view.status_text.as_str(),
+            "beta.txt is hidden by the current filter"
+        );
     }
 
     #[test]
