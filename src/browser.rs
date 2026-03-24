@@ -1,22 +1,32 @@
 use slint::{ModelRc, SharedString, VecModel};
 use std::{
     cell::RefCell,
-    env, fs,
+    fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     rc::Rc,
 };
 
-use crate::{AppWindow, BreadcrumbEntry, FileEntry, SidebarEntry};
+use crate::{AppWindow, FileEntry, SidebarEntry};
 
 #[path = "browser/drag_selection.rs"]
 mod drag_selection;
+#[path = "browser/file_ops.rs"]
+mod file_ops;
+#[path = "browser/pathing.rs"]
+mod pathing;
 #[path = "browser/selection.rs"]
 mod selection;
 
 use drag_selection::{
     compute_drag_autoscroll_delta, DragPoint, DragRect, DragScrollViewport, DragSelectionSession,
     DragSelectionSnapshot, VisibleItemLayout,
+};
+use file_ops::{
+    copy_path, destination_for_transfer, format_item_count, item_name, launch_path, move_path,
+    unique_child_path,
+};
+use pathing::{
+    build_breadcrumbs, build_sidebar_entries, current_sidebar_index, load_directory_entries,
 };
 use selection::{normalize_operation_paths, SelectionState};
 
@@ -1399,112 +1409,6 @@ enum TransferKind {
     Cut,
 }
 
-fn build_sidebar_entries(start_dir: &Path) -> (Vec<SidebarEntry>, Vec<PathBuf>) {
-    let mut entries = Vec::new();
-    let mut paths = Vec::new();
-
-    if let Some(home) = home_directory() {
-        push_sidebar_entry(&mut entries, &mut paths, "Home", home);
-    }
-
-    push_sidebar_entry(
-        &mut entries,
-        &mut paths,
-        "Workspace",
-        start_dir.to_path_buf(),
-    );
-    push_sidebar_entry(&mut entries, &mut paths, "Root", filesystem_root(start_dir));
-
-    (entries, paths)
-}
-
-fn push_sidebar_entry(
-    entries: &mut Vec<SidebarEntry>,
-    paths: &mut Vec<PathBuf>,
-    label: &str,
-    path: PathBuf,
-) {
-    if paths.iter().any(|existing| existing == &path) {
-        return;
-    }
-
-    entries.push(SidebarEntry {
-        label: SharedString::from(label),
-        caption: SharedString::from(short_path_label(&path)),
-    });
-    paths.push(path);
-}
-
-fn build_breadcrumbs(current_dir: &Path) -> (Vec<BreadcrumbEntry>, Vec<PathBuf>) {
-    let mut paths = current_dir
-        .ancestors()
-        .map(Path::to_path_buf)
-        .collect::<Vec<_>>();
-    paths.reverse();
-
-    let items = paths
-        .iter()
-        .map(|path| BreadcrumbEntry {
-            label: SharedString::from(breadcrumb_label(path)),
-        })
-        .collect::<Vec<_>>();
-
-    (items, paths)
-}
-
-fn breadcrumb_label(path: &Path) -> String {
-    path.file_name()
-        .map(|value| value.to_string_lossy().into_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| {
-            let text = path.display().to_string();
-            if text.is_empty() {
-                "/".to_string()
-            } else {
-                text
-            }
-        })
-}
-
-fn load_directory_entries(path: &Path) -> Result<Vec<DirectoryEntry>, std::io::Error> {
-    let entries = fs::read_dir(path)?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            let metadata = entry.metadata().ok()?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-
-            if name.is_empty() {
-                return None;
-            }
-
-            let is_dir = metadata.is_dir();
-            let size_bytes = if is_dir { 0 } else { metadata.len() };
-
-            Some(DirectoryEntry {
-                path_label: path.display().to_string(),
-                kind_label: if is_dir {
-                    "Folder".to_string()
-                } else {
-                    file_kind_label(&path)
-                },
-                size_label: if is_dir {
-                    "—".to_string()
-                } else {
-                    format_bytes(size_bytes)
-                },
-                name_lower: name.to_lowercase(),
-                path,
-                name,
-                is_dir,
-                size_bytes,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    Ok(entries)
-}
-
 fn build_selection_text(
     selected_count: usize,
     operation_count: usize,
@@ -1582,226 +1486,6 @@ fn build_status_text(
             "{} of {} item(s) match \"{}\"",
             visible_count, total_count, filter_query
         ))
-    }
-}
-
-fn current_sidebar_index(sidebar_paths: &[PathBuf], current_dir: &Path) -> i32 {
-    sidebar_paths
-        .iter()
-        .enumerate()
-        .filter(|(_, path)| current_dir.starts_with(path))
-        .max_by_key(|(_, path)| path.components().count())
-        .map(|(index, _)| index as i32)
-        .unwrap_or(0)
-}
-
-fn home_directory() -> Option<PathBuf> {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("USERPROFILE").map(PathBuf::from))
-}
-
-fn filesystem_root(path: &Path) -> PathBuf {
-    let mut root = path.to_path_buf();
-
-    while let Some(parent) = root.parent() {
-        root = parent.to_path_buf();
-    }
-
-    root
-}
-
-fn short_path_label(path: &Path) -> String {
-    let text = path.display().to_string();
-    let chars = text.chars().collect::<Vec<_>>();
-
-    if chars.len() <= 30 {
-        text
-    } else {
-        let suffix = chars[chars.len() - 29..].iter().collect::<String>();
-        format!("…{suffix}")
-    }
-}
-
-fn file_kind_label(path: &Path) -> String {
-    let extension = path
-        .extension()
-        .map(|value| value.to_string_lossy().into_owned())
-        .filter(|value| !value.is_empty());
-
-    match extension {
-        Some(extension) => format!("{} file", extension.to_uppercase()),
-        None => "File".to_string(),
-    }
-}
-
-fn item_name(path: &Path) -> String {
-    path.file_name()
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string())
-}
-
-fn unique_child_path(parent: &Path, base_name: &str, extension: Option<&str>) -> PathBuf {
-    let extension = extension
-        .map(str::to_string)
-        .filter(|value| !value.is_empty());
-    let mut index = 1;
-
-    loop {
-        let candidate_name = if index == 1 {
-            base_name.to_string()
-        } else {
-            format!("{} {}", base_name, index)
-        };
-
-        let candidate = match extension.as_ref() {
-            Some(extension) => parent.join(format!("{}.{}", candidate_name, extension)),
-            None => parent.join(candidate_name),
-        };
-
-        if !candidate.exists() {
-            return candidate;
-        }
-
-        index += 1;
-    }
-}
-
-fn copy_path(source: &Path, destination: &Path) -> std::io::Result<()> {
-    if source.is_dir() {
-        fs::create_dir_all(destination)?;
-
-        for entry in fs::read_dir(source)? {
-            let entry = entry?;
-            let child_source = entry.path();
-            let child_destination = destination.join(entry.file_name());
-            copy_path(&child_source, &child_destination)?;
-        }
-
-        Ok(())
-    } else {
-        fs::copy(source, destination).map(|_| ())
-    }
-}
-
-fn move_path(source: &Path, destination: &Path) -> std::io::Result<()> {
-    match fs::rename(source, destination) {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            copy_path(source, destination)?;
-            if source.is_dir() {
-                fs::remove_dir_all(source)
-            } else {
-                fs::remove_file(source)
-            }
-        }
-    }
-}
-
-fn destination_for_transfer(kind: TransferKind, source: &Path, target_dir: &Path) -> PathBuf {
-    let source_name = item_name(source);
-    let original_target = target_dir.join(&source_name);
-
-    if matches!(kind, TransferKind::Cut) && !original_target.exists() {
-        return original_target;
-    }
-
-    if matches!(kind, TransferKind::Copy)
-        && !original_target.exists()
-        && source.parent() != Some(target_dir)
-    {
-        return original_target;
-    }
-
-    let (stem, extension) = split_name_parts(source);
-    let copy_base = if matches!(kind, TransferKind::Copy) {
-        format!("{} Copy", stem)
-    } else {
-        stem
-    };
-
-    unique_child_path(target_dir, &copy_base, extension.as_deref())
-}
-
-fn split_name_parts(path: &Path) -> (String, Option<String>) {
-    if path.is_dir() {
-        return (item_name(path), None);
-    }
-
-    let extension = path
-        .extension()
-        .map(|value| value.to_string_lossy().into_owned())
-        .filter(|value| !value.is_empty());
-
-    let stem = path
-        .file_stem()
-        .map(|value| value.to_string_lossy().into_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| item_name(path));
-
-    (stem, extension)
-}
-
-fn launch_path(path: &Path) -> std::io::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        let mut command = Command::new("cmd");
-        command.arg("/C").arg("start").arg("").arg(path);
-        return spawn_detached(command);
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let mut command = Command::new("open");
-        command.arg(path);
-        return spawn_detached(command);
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let mut command = Command::new("xdg-open");
-        command.arg(path);
-        return spawn_detached(command);
-    }
-
-    #[allow(unreachable_code)]
-    Err(std::io::Error::other(
-        "Open is not implemented for this platform",
-    ))
-}
-
-fn spawn_detached(mut command: Command) -> std::io::Result<()> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(|_| ())
-}
-
-fn format_item_count(count: usize) -> String {
-    if count == 1 {
-        "1 item".to_string()
-    } else {
-        format!("{} items", count)
-    }
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-
-    let mut size = bytes as f64;
-    let mut unit_index = 0;
-
-    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit_index += 1;
-    }
-
-    if unit_index == 0 {
-        format!("{} {}", bytes, UNITS[unit_index])
-    } else {
-        format!("{size:.1} {}", UNITS[unit_index])
     }
 }
 
