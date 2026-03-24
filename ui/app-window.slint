@@ -264,7 +264,6 @@ export component AppWindow inherits Window {
     in-out property<float> drag-selection-y: 0;
     in-out property<float> drag-selection-width: 0;
     in-out property<float> drag-selection-height: 0;
-    in-out property<float> drag-scroll-delta: 0;
     in-out property<float> drag-scroll-position: 0;
     in-out property<float> drag-scroll-max-position: 0;
     in-out property<[SidebarEntry]> sidebar-items;
@@ -332,7 +331,6 @@ export component AppWindow inherits Window {
     }
 
     execute-drag-scroll(delta) => {
-        root.drag-scroll-delta = delta;
         let next-position = Math.max(0, Math.min(root.drag-scroll-max-position, root.drag-scroll-position + delta));
         let applied-delta = next-position - root.drag-scroll-position;
         root.drag-scroll-position = next-position;
@@ -955,6 +953,20 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    Timer {
+                        interval: 16ms;
+                        running: root.drag-selection-active;
+                        triggered => {
+                            root.drag-scroll-max-position = Math.max(0, file-list.viewport-height / 1px - file-list.height / 1px);
+                            root.update-drag-scroll-viewport(
+                                file-list.y / 1px,
+                                file-list.height / 1px,
+                                root.drag-scroll-position,
+                                root.drag-scroll-max-position,
+                            );
+                        }
+                    }
+
                     TouchArea {
                         pointer-event(event) => {
                             if (event.button == PointerEventButton.left) {
@@ -972,6 +984,26 @@ export component AppWindow inherits Window {
                     file-list := ListView {
                         width: parent.width;
                         height: parent.height;
+                        viewport-y: root.drag-scroll-position * 1px;
+
+                        changed y => {
+                            root.update-drag-scroll-viewport(
+                                self.y / 1px,
+                                self.height / 1px,
+                                root.drag-scroll-position,
+                                root.drag-scroll-max-position,
+                            );
+                        }
+                        changed viewport-y => {
+                            root.drag-scroll-position = self.viewport-y / 1px;
+                            root.drag-scroll-max-position = Math.max(0, self.viewport-height / 1px - self.height / 1px);
+                            root.update-drag-scroll-viewport(
+                                self.y / 1px,
+                                self.height / 1px,
+                                root.drag-scroll-position,
+                                root.drag-scroll-max-position,
+                            );
+                        }
 
                         for entry[i] in root.file-items : FileCard {
                             width: parent.width;
