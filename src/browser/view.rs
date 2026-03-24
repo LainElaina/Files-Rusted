@@ -30,13 +30,6 @@ pub(super) fn build_browser_view(
     rename_draft: &str,
 ) -> BrowserViewData {
     let total_count = loaded_entries.len() as i32;
-    let loaded_paths = loaded_entries
-        .iter()
-        .map(|entry| entry.path.clone())
-        .collect::<Vec<_>>();
-
-    let mut reconciled_selection = selection.clone();
-    reconciled_selection.reconcile_selection(&loaded_paths);
 
     let effective_filter = filter_query.trim().to_lowercase();
     let mut visible_entries = loaded_entries
@@ -54,11 +47,11 @@ pub(super) fn build_browser_view(
         .collect::<Vec<_>>();
     let visible_count = visible_paths.len() as i32;
 
-    let primary_selected = reconciled_selection.primary_selected_path().cloned();
-    let selected_paths = reconciled_selection.selected_paths().to_vec();
+    let primary_selected = selection.primary_selected_path().cloned();
+    let selected_paths = selection.selected_paths().to_vec();
     let selected_lookup = selected_paths.iter().cloned().collect::<HashSet<_>>();
     let selected_count = selected_paths.len();
-    let operation_paths = reconciled_selection.selected_items_for_operation();
+    let operation_paths = selection.selected_items_for_operation();
     let operation_count = operation_paths.len();
 
     let focused_index = primary_selected

@@ -815,6 +815,18 @@ impl BrowserState {
         let rename_mode = *self.rename_mode.borrow();
         let rename_draft = self.rename_draft.borrow().clone();
 
+        {
+            let loaded_paths = self
+                .loaded_entries
+                .borrow()
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect::<Vec<_>>();
+            self.selection_state
+                .borrow_mut()
+                .reconcile_selection(&loaded_paths);
+        }
+
         let mut derived = {
             let loaded_entries = self.loaded_entries.borrow();
             let selection_state = self.selection_state.borrow();
@@ -1860,6 +1872,32 @@ mod tests {
         }));
         state.update_drag_selection(DragPoint::new(280.0, 296.0));
         assert_eq!(state.drag_autoscroll_step_for_active_drag(), 0.0);
+    }
+
+    #[test]
+    fn browser_state_apply_view_reconciles_canonical_selection_state() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let file_model = VecModel::from(Vec::<FileEntry>::new());
+
+        state
+            .loaded_entries
+            .borrow_mut()
+            .push(directory_entry("/workspace/alpha.txt", false, 10));
+        state
+            .selection_state
+            .borrow_mut()
+            .set_single_selection(Some(PathBuf::from("/workspace/missing.txt")));
+
+        state.apply_view_to_state_and_model(&file_model);
+
+        assert!(state.selection_state.borrow().selected_paths().is_empty());
+        assert_eq!(state.selection_state.borrow().primary_selected_path().cloned(), None);
+        assert_eq!(state.selection_state.borrow().selection_anchor_path().cloned(), None);
+        assert!(state
+            .selection_state
+            .borrow()
+            .selected_items_for_operation()
+            .is_empty());
     }
 
     #[test]
