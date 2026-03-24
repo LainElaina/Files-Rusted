@@ -1368,7 +1368,7 @@ mod tests {
         let view = view::build_browser_view(
             &entries,
             SortMode::NameAsc,
-            "alp",
+            "txt",
             &selection,
             false,
             "",
@@ -1376,15 +1376,21 @@ mod tests {
 
         assert_eq!(
             view.visible_paths,
-            vec![PathBuf::from("/workspace/alpha.txt")]
+            vec![
+                PathBuf::from("/workspace/alpha.txt"),
+                PathBuf::from("/workspace/zeta.txt"),
+            ]
         );
-        assert_eq!(view.visible_count, 1);
+        assert_eq!(view.visible_count, 2);
         assert_eq!(view.total_count, 3);
         assert_eq!(view.focused_index, 0);
-        assert_eq!(view.file_rows.len(), 1);
+        assert_eq!(view.file_rows.len(), 2);
         assert_eq!(view.file_rows[0].name.as_str(), "alpha.txt");
         assert!(view.file_rows[0].focused);
         assert!(!view.file_rows[0].selected);
+        assert_eq!(view.file_rows[1].name.as_str(), "zeta.txt");
+        assert!(!view.file_rows[1].focused);
+        assert!(!view.file_rows[1].selected);
         assert_eq!(view.selection_text.as_str(), "Focused: alpha.txt");
         assert_eq!(view.status_text.as_str(), "Focused: alpha.txt");
         assert!(view.can_delete_selection);
