@@ -19,9 +19,6 @@ pub(super) struct BrowserViewData {
     pub(super) can_transfer_selection: bool,
     pub(super) rename_mode: bool,
     pub(super) rename_draft: SharedString,
-    pub(super) selected_paths: Vec<PathBuf>,
-    pub(super) primary_selected_path: Option<PathBuf>,
-    pub(super) selection_anchor_path: Option<PathBuf>,
 }
 
 pub(super) fn build_browser_view(
@@ -31,7 +28,6 @@ pub(super) fn build_browser_view(
     selection: &SelectionState,
     rename_mode: bool,
     rename_draft: &str,
-    _has_pending_transfer: bool,
 ) -> BrowserViewData {
     let total_count = loaded_entries.len() as i32;
     let loaded_paths = loaded_entries
@@ -116,9 +112,6 @@ pub(super) fn build_browser_view(
         can_transfer_selection: operation_count > 0,
         rename_mode: rename_mode && operation_count == 1,
         rename_draft: SharedString::from(rename_draft),
-        selected_paths,
-        primary_selected_path: primary_selected,
-        selection_anchor_path: reconciled_selection.selection_anchor_path().cloned(),
     }
 }
 

@@ -826,15 +826,8 @@ impl BrowserState {
                 &selection_state,
                 rename_mode,
                 &rename_draft,
-                self.pending_transfer.borrow().is_some(),
             )
         };
-
-        self.selection_state.borrow_mut().set_explicit_selection(
-            derived.selected_paths,
-            derived.primary_selected_path,
-            derived.selection_anchor_path,
-        );
 
         if let Some(status_override) = self.status_override.borrow().clone() {
             derived.status_text = SharedString::from(status_override);
@@ -1369,7 +1362,9 @@ mod tests {
             directory_entry("/workspace/docs", true, 0),
         ];
 
-        let selection = SelectionState::default();
+        let mut selection = SelectionState::default();
+        selection.set_focus_only(Some(PathBuf::from("/workspace/alpha.txt")));
+
         let view = view::build_browser_view(
             &entries,
             SortMode::NameAsc,
@@ -1377,16 +1372,62 @@ mod tests {
             &selection,
             false,
             "",
-            false,
         );
 
+        assert_eq!(
+            view.visible_paths,
+            vec![PathBuf::from("/workspace/alpha.txt")]
+        );
         assert_eq!(view.visible_count, 1);
         assert_eq!(view.total_count, 3);
-        assert_eq!(view.focused_index, -1);
+        assert_eq!(view.focused_index, 0);
         assert_eq!(view.file_rows.len(), 1);
         assert_eq!(view.file_rows[0].name.as_str(), "alpha.txt");
-        assert!(!view.can_open_selection);
-        assert!(!view.can_rename_selection);
+        assert!(view.file_rows[0].focused);
+        assert!(!view.file_rows[0].selected);
+        assert_eq!(view.selection_text.as_str(), "Focused: alpha.txt");
+        assert_eq!(view.status_text.as_str(), "Focused: alpha.txt");
+        assert!(view.can_delete_selection);
+        assert!(view.can_transfer_selection);
+        assert!(view.can_open_selection);
+        assert!(view.can_rename_selection);
+    }
+
+    #[test]
+    fn build_browser_view_reports_hidden_selected_item() {
+        let entries = vec![
+            directory_entry("/workspace/zeta.txt", false, 20),
+            directory_entry("/workspace/alpha.txt", false, 10),
+            directory_entry("/workspace/docs", true, 0),
+        ];
+
+        let mut selection = SelectionState::default();
+        selection.set_single_selection(Some(PathBuf::from("/workspace/zeta.txt")));
+
+        let view = view::build_browser_view(
+            &entries,
+            SortMode::NameAsc,
+            "alp",
+            &selection,
+            false,
+            "",
+        );
+
+        assert_eq!(
+            view.visible_paths,
+            vec![PathBuf::from("/workspace/alpha.txt")]
+        );
+        assert_eq!(view.focused_index, -1);
+        assert_eq!(
+            view.selection_text.as_str(),
+            "Selected file: zeta.txt (hidden by filter)"
+        );
+        assert_eq!(
+            view.status_text.as_str(),
+            "zeta.txt is hidden by the current filter"
+        );
+        assert!(view.can_delete_selection);
+        assert!(view.can_transfer_selection);
     }
 
     #[test]
