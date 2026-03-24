@@ -835,15 +835,19 @@ impl BrowserState {
         derived
     }
 
+    fn apply_view_to_state_and_model(&self, file_model: &VecModel<FileEntry>) -> view::BrowserViewData {
+        let derived = self.derived_view_for_apply();
+        *self.visible_paths.borrow_mut() = derived.visible_paths.clone();
+        file_model.set_vec(derived.file_rows.clone());
+        derived
+    }
+
     fn apply_view(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         let current_dir = self.current_dir.borrow().clone();
         let filter_query = self.filter_query.borrow().clone();
         let sort_mode = *self.sort_mode.borrow();
 
-        let derived = self.derived_view_for_apply();
-
-        *self.visible_paths.borrow_mut() = derived.visible_paths;
-        file_model.set_vec(derived.file_rows);
+        let derived = self.apply_view_to_state_and_model(file_model);
 
         self.update_breadcrumbs(window, &current_dir);
         window.set_current_path(SharedString::from(current_dir.display().to_string()));
@@ -1362,6 +1366,7 @@ enum TransferKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slint::Model;
 
     #[test]
     fn build_browser_view_filters_rows_and_keeps_focus_index() {
@@ -1860,6 +1865,7 @@ mod tests {
     #[test]
     fn browser_state_apply_view_uses_extracted_view_builder() {
         let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let file_model = VecModel::from(Vec::<FileEntry>::new());
 
         state.loaded_entries.borrow_mut().extend([
             directory_entry("/workspace/alpha.txt", false, 10),
@@ -1871,9 +1877,15 @@ mod tests {
             .borrow_mut()
             .set_single_selection(Some(PathBuf::from("/workspace/beta.txt")));
 
-        let view = state.derived_view_for_apply();
+        let view = state.apply_view_to_state_and_model(&file_model);
 
-        assert_eq!(view.visible_paths, vec![PathBuf::from("/workspace/alpha.txt")]);
+        assert_eq!(
+            state.visible_paths.borrow().clone(),
+            vec![PathBuf::from("/workspace/alpha.txt")]
+        );
+        assert_eq!(file_model.row_count(), 1);
+        let row = file_model.row_data(0).expect("visible row");
+        assert_eq!(row.name.as_str(), "alpha.txt");
         assert_eq!(
             view.selection_text.as_str(),
             "Selected file: beta.txt (hidden by filter)"
