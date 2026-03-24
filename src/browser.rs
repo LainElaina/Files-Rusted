@@ -16,6 +16,8 @@ mod file_ops;
 mod pathing;
 #[path = "browser/selection.rs"]
 mod selection;
+#[path = "browser/view.rs"]
+mod view;
 
 use drag_selection::{
     compute_drag_autoscroll_delta, DragPoint, DragRect, DragScrollViewport, DragSelectionSession,
@@ -807,109 +809,73 @@ impl BrowserState {
         self.refresh(window, file_model);
     }
 
+    fn derived_view_for_apply(&self) -> view::BrowserViewData {
+        let filter_query = self.filter_query.borrow().clone();
+        let sort_mode = *self.sort_mode.borrow();
+        let rename_mode = *self.rename_mode.borrow();
+        let rename_draft = self.rename_draft.borrow().clone();
+
+        {
+            let loaded_paths = self
+                .loaded_entries
+                .borrow()
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect::<Vec<_>>();
+            self.selection_state
+                .borrow_mut()
+                .reconcile_selection(&loaded_paths);
+        }
+
+        let mut derived = {
+            let loaded_entries = self.loaded_entries.borrow();
+            let selection_state = self.selection_state.borrow();
+            view::build_browser_view(
+                &loaded_entries,
+                sort_mode,
+                &filter_query,
+                &selection_state,
+                rename_mode,
+                &rename_draft,
+            )
+        };
+
+        if let Some(status_override) = self.status_override.borrow().clone() {
+            derived.status_text = SharedString::from(status_override);
+        }
+
+        derived
+    }
+
+    fn apply_view_to_state_and_model(&self, file_model: &VecModel<FileEntry>) -> view::BrowserViewData {
+        let derived = self.derived_view_for_apply();
+        *self.visible_paths.borrow_mut() = derived.visible_paths.clone();
+        file_model.set_vec(derived.file_rows.clone());
+        derived
+    }
+
     fn apply_view(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         let current_dir = self.current_dir.borrow().clone();
         let filter_query = self.filter_query.borrow().clone();
         let sort_mode = *self.sort_mode.borrow();
-        let loaded_entries = self.loaded_entries.borrow();
-        let total_count = loaded_entries.len() as i32;
 
-        let loaded_paths = loaded_entries
-            .iter()
-            .map(|entry| entry.path.clone())
-            .collect::<Vec<_>>();
-        self.selection_state
-            .borrow_mut()
-            .reconcile_selection(&loaded_paths);
-
-        let effective_filter = filter_query.trim().to_lowercase();
-        let mut visible_entries = loaded_entries
-            .iter()
-            .filter(|entry| {
-                effective_filter.is_empty() || entry.name_lower.contains(&effective_filter)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-
-        visible_entries.sort_by(|left, right| sort_mode.compare(left, right));
-
-        let visible_paths = visible_entries
-            .iter()
-            .map(|entry| entry.path.clone())
-            .collect::<Vec<_>>();
-        let visible_count = visible_paths.len() as i32;
-
-        let primary_selected = self.selection_state.borrow().primary_selected_path().cloned();
-        let selected_paths = self.selection_state.borrow().selected_paths().to_vec();
-        let selected_lookup = selected_paths.iter().cloned().collect::<std::collections::HashSet<_>>();
-        let selected_count = selected_paths.len();
-        let operation_paths = self.selection_state.borrow().selected_items_for_operation();
-        let operation_count = operation_paths.len();
-
-        let focused_index = primary_selected
-            .as_ref()
-            .and_then(|path| visible_paths.iter().position(|candidate| candidate == path))
-            .map(|index| index as i32)
-            .unwrap_or(-1);
-        let primary_visible = focused_index >= 0;
-        let primary_entry = primary_selected
-            .as_ref()
-            .and_then(|path| loaded_entries.iter().find(|entry| entry.path == *path));
-        let rename_mode = *self.rename_mode.borrow();
-        let rename_draft = self.rename_draft.borrow().clone();
-
-        let selection_text = build_selection_text(
-            selected_count,
-            operation_count,
-            primary_entry,
-            primary_visible,
-        );
-        let status_text = self
-            .status_override
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| {
-                build_status_text(
-                    visible_count,
-                    total_count,
-                    filter_query.trim(),
-                    primary_entry,
-                    primary_visible,
-                    selected_count,
-                    operation_count,
-                )
-                .to_string()
-            });
-
-        let file_rows = visible_entries
-            .into_iter()
-            .map(|entry| {
-                let selected = selected_lookup.contains(&entry.path);
-                let focused = primary_selected
-                    .as_ref()
-                    .is_some_and(|path| path == &entry.path);
-                entry.into_view(selected, focused)
-            })
-            .collect::<Vec<_>>();
-
-        *self.visible_paths.borrow_mut() = visible_paths;
-        file_model.set_vec(file_rows);
+        let derived = self.apply_view_to_state_and_model(file_model);
 
         self.update_breadcrumbs(window, &current_dir);
         window.set_current_path(SharedString::from(current_dir.display().to_string()));
-        window.set_item_count(visible_count);
-        window.set_total_item_count(total_count);
-        window.set_selected_file_index(focused_index);
-        window.set_selection_text(selection_text);
-        window.set_status_text(SharedString::from(status_text));
+        window.set_item_count(derived.visible_count);
+        window.set_total_item_count(derived.total_count);
+        window.set_selected_file_index(derived.focused_index);
+        window.set_selection_text(derived.selection_text);
+        window.set_status_text(derived.status_text);
         window.set_clipboard_text(SharedString::from(self.clipboard_text()));
-        window.set_can_open_selection(operation_count > 0);
-        window.set_can_rename_selection(operation_count == 1);
-        window.set_can_delete_selection(operation_count > 0);
-        window.set_can_transfer_selection(operation_count > 0);
+        window.set_can_open_selection(derived.can_open_selection);
+        window.set_can_rename_selection(derived.can_rename_selection);
+        window.set_can_delete_selection(derived.can_delete_selection);
+        window.set_can_transfer_selection(derived.can_transfer_selection);
         window.set_can_paste(self.pending_transfer.borrow().is_some());
-        window.set_rename_mode(rename_mode && operation_count == 1);
-        window.set_rename_draft(SharedString::from(rename_draft));
+        window.set_rename_mode(derived.rename_mode);
+        window.set_rename_draft(derived.rename_draft);
         if let Some(rect) = *self.drag_selection_rect.borrow() {
             window.set_drag_selection_active(true);
             window.set_drag_selection_x(rect.x);
@@ -1409,89 +1375,110 @@ enum TransferKind {
     Cut,
 }
 
-fn build_selection_text(
-    selected_count: usize,
-    operation_count: usize,
-    primary_entry: Option<&DirectoryEntry>,
-    primary_visible: bool,
-) -> SharedString {
-    match selected_count {
-        0 => {
-            if operation_count == 1 {
-                if let Some(entry) = primary_entry {
-                    return SharedString::from(format!("Focused: {}", entry.name));
-                }
-            }
-
-            SharedString::from("No item selected")
-        }
-        1 => {
-            let Some(entry) = primary_entry else {
-                return SharedString::from("1 item selected");
-            };
-
-            let kind = if entry.is_dir { "folder" } else { "file" };
-            if primary_visible {
-                SharedString::from(format!("Selected {}: {}", kind, entry.name))
-            } else {
-                SharedString::from(format!(
-                    "Selected {}: {} (hidden by filter)",
-                    kind, entry.name
-                ))
-            }
-        }
-        count => SharedString::from(format!("{} items selected", count)),
-    }
-}
-
-fn build_status_text(
-    visible_count: i32,
-    total_count: i32,
-    filter_query: &str,
-    primary_entry: Option<&DirectoryEntry>,
-    primary_visible: bool,
-    selected_count: usize,
-    _operation_count: usize,
-) -> SharedString {
-    if selected_count > 1 {
-        return SharedString::from(format!("{} items selected", selected_count));
-    }
-
-    if let Some(entry) = primary_entry {
-        if selected_count == 0 {
-            return SharedString::from(format!("Focused: {}", entry.name));
-        }
-
-        if !primary_visible {
-            return SharedString::from(format!(
-                "{} is hidden by the current filter",
-                entry.name
-            ));
-        }
-
-        if entry.is_dir {
-            return SharedString::from(format!(
-                "Folder {} selected. Double-click or use Open",
-                entry.name
-            ));
-        }
-
-        return SharedString::from(format!("File {} selected", entry.name));
-    }
-
-    if filter_query.is_empty() {
-        SharedString::from(format!("{} item(s) loaded", visible_count))
-    } else {
-        SharedString::from(format!(
-            "{} of {} item(s) match \"{}\"",
-            visible_count, total_count, filter_query
-        ))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slint::Model;
+
+    #[test]
+    fn build_browser_view_filters_rows_and_keeps_focus_index() {
+        let entries = vec![
+            directory_entry("/workspace/zeta.txt", false, 20),
+            directory_entry("/workspace/alpha.txt", false, 10),
+            directory_entry("/workspace/docs", true, 0),
+        ];
+
+        let mut selection = SelectionState::default();
+        selection.set_focus_only(Some(PathBuf::from("/workspace/alpha.txt")));
+
+        let view = view::build_browser_view(
+            &entries,
+            SortMode::NameAsc,
+            "txt",
+            &selection,
+            false,
+            "",
+        );
+
+        assert_eq!(
+            view.visible_paths,
+            vec![
+                PathBuf::from("/workspace/alpha.txt"),
+                PathBuf::from("/workspace/zeta.txt"),
+            ]
+        );
+        assert_eq!(view.visible_count, 2);
+        assert_eq!(view.total_count, 3);
+        assert_eq!(view.focused_index, 0);
+        assert_eq!(view.file_rows.len(), 2);
+        assert_eq!(view.file_rows[0].name.as_str(), "alpha.txt");
+        assert!(view.file_rows[0].focused);
+        assert!(!view.file_rows[0].selected);
+        assert_eq!(view.file_rows[1].name.as_str(), "zeta.txt");
+        assert!(!view.file_rows[1].focused);
+        assert!(!view.file_rows[1].selected);
+        assert_eq!(view.selection_text.as_str(), "Focused: alpha.txt");
+        assert_eq!(view.status_text.as_str(), "Focused: alpha.txt");
+        assert!(view.can_delete_selection);
+        assert!(view.can_transfer_selection);
+        assert!(view.can_open_selection);
+        assert!(view.can_rename_selection);
+    }
+
+    #[test]
+    fn build_browser_view_reports_hidden_selected_item() {
+        let entries = vec![
+            directory_entry("/workspace/zeta.txt", false, 20),
+            directory_entry("/workspace/alpha.txt", false, 10),
+            directory_entry("/workspace/docs", true, 0),
+        ];
+
+        let mut selection = SelectionState::default();
+        selection.set_single_selection(Some(PathBuf::from("/workspace/zeta.txt")));
+
+        let view = view::build_browser_view(
+            &entries,
+            SortMode::NameAsc,
+            "alp",
+            &selection,
+            false,
+            "",
+        );
+
+        assert_eq!(
+            view.visible_paths,
+            vec![PathBuf::from("/workspace/alpha.txt")]
+        );
+        assert_eq!(view.focused_index, -1);
+        assert_eq!(
+            view.selection_text.as_str(),
+            "Selected file: zeta.txt (hidden by filter)"
+        );
+        assert_eq!(
+            view.status_text.as_str(),
+            "zeta.txt is hidden by the current filter"
+        );
+        assert!(view.can_delete_selection);
+        assert!(view.can_transfer_selection);
+    }
+
+    #[test]
+    fn build_status_text_reports_hidden_primary_selection() {
+        let entry = DirectoryEntry {
+            path: PathBuf::from("/workspace/notes.txt"),
+            name: "notes.txt".to_string(),
+            name_lower: "notes.txt".to_string(),
+            path_label: "/workspace/notes.txt".to_string(),
+            kind_label: "File".to_string(),
+            is_dir: false,
+            size_bytes: 12,
+            size_label: "12 B".to_string(),
+        };
+
+        let text = view::build_status_text(0, 3, "abc", Some(&entry), false, 1, 1);
+
+        assert_eq!(text.as_str(), "notes.txt is hidden by the current filter");
+    }
 
     #[test]
     fn drag_selection_replaces_selection_without_modifiers() {
@@ -1888,6 +1875,66 @@ mod tests {
     }
 
     #[test]
+    fn browser_state_apply_view_reconciles_canonical_selection_state() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let file_model = VecModel::from(Vec::<FileEntry>::new());
+
+        state
+            .loaded_entries
+            .borrow_mut()
+            .push(directory_entry("/workspace/alpha.txt", false, 10));
+        state
+            .selection_state
+            .borrow_mut()
+            .set_single_selection(Some(PathBuf::from("/workspace/missing.txt")));
+
+        state.apply_view_to_state_and_model(&file_model);
+
+        assert!(state.selection_state.borrow().selected_paths().is_empty());
+        assert_eq!(state.selection_state.borrow().primary_selected_path().cloned(), None);
+        assert_eq!(state.selection_state.borrow().selection_anchor_path().cloned(), None);
+        assert!(state
+            .selection_state
+            .borrow()
+            .selected_items_for_operation()
+            .is_empty());
+    }
+
+    #[test]
+    fn browser_state_apply_view_uses_extracted_view_builder() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let file_model = VecModel::from(Vec::<FileEntry>::new());
+
+        state.loaded_entries.borrow_mut().extend([
+            directory_entry("/workspace/alpha.txt", false, 10),
+            directory_entry("/workspace/beta.txt", false, 20),
+        ]);
+        *state.filter_query.borrow_mut() = "alpha".to_string();
+        state
+            .selection_state
+            .borrow_mut()
+            .set_single_selection(Some(PathBuf::from("/workspace/beta.txt")));
+
+        let view = state.apply_view_to_state_and_model(&file_model);
+
+        assert_eq!(
+            state.visible_paths.borrow().clone(),
+            vec![PathBuf::from("/workspace/alpha.txt")]
+        );
+        assert_eq!(file_model.row_count(), 1);
+        let row = file_model.row_data(0).expect("visible row");
+        assert_eq!(row.name.as_str(), "alpha.txt");
+        assert_eq!(
+            view.selection_text.as_str(),
+            "Selected file: beta.txt (hidden by filter)"
+        );
+        assert_eq!(
+            view.status_text.as_str(),
+            "beta.txt is hidden by the current filter"
+        );
+    }
+
+    #[test]
     fn browser_state_public_selection_flow_still_works_after_refactor() {
         let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
         let layouts = vec![
@@ -1940,6 +1987,29 @@ mod tests {
             selected,
             primary,
             anchor,
+        }
+    }
+
+    fn directory_entry(path: &str, is_dir: bool, size_bytes: u64) -> DirectoryEntry {
+        let path = PathBuf::from(path);
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        DirectoryEntry {
+            path: path.clone(),
+            name: name.clone(),
+            name_lower: name.to_lowercase(),
+            path_label: path.display().to_string(),
+            kind_label: if is_dir {
+                "Folder".to_string()
+            } else {
+                "File".to_string()
+            },
+            is_dir,
+            size_bytes,
+            size_label: format!("{} B", size_bytes),
         }
     }
 }
