@@ -16,6 +16,8 @@ mod file_ops;
 mod pathing;
 #[path = "browser/selection.rs"]
 mod selection;
+#[path = "browser/view.rs"]
+mod view;
 
 use drag_selection::{
     compute_drag_autoscroll_delta, DragPoint, DragRect, DragScrollViewport, DragSelectionSession,
@@ -858,7 +860,7 @@ impl BrowserState {
         let rename_mode = *self.rename_mode.borrow();
         let rename_draft = self.rename_draft.borrow().clone();
 
-        let selection_text = build_selection_text(
+        let selection_text = view::build_selection_text(
             selected_count,
             operation_count,
             primary_entry,
@@ -869,7 +871,7 @@ impl BrowserState {
             .borrow()
             .clone()
             .unwrap_or_else(|| {
-                build_status_text(
+                view::build_status_text(
                     visible_count,
                     total_count,
                     filter_query.trim(),
@@ -1409,89 +1411,27 @@ enum TransferKind {
     Cut,
 }
 
-fn build_selection_text(
-    selected_count: usize,
-    operation_count: usize,
-    primary_entry: Option<&DirectoryEntry>,
-    primary_visible: bool,
-) -> SharedString {
-    match selected_count {
-        0 => {
-            if operation_count == 1 {
-                if let Some(entry) = primary_entry {
-                    return SharedString::from(format!("Focused: {}", entry.name));
-                }
-            }
-
-            SharedString::from("No item selected")
-        }
-        1 => {
-            let Some(entry) = primary_entry else {
-                return SharedString::from("1 item selected");
-            };
-
-            let kind = if entry.is_dir { "folder" } else { "file" };
-            if primary_visible {
-                SharedString::from(format!("Selected {}: {}", kind, entry.name))
-            } else {
-                SharedString::from(format!(
-                    "Selected {}: {} (hidden by filter)",
-                    kind, entry.name
-                ))
-            }
-        }
-        count => SharedString::from(format!("{} items selected", count)),
-    }
-}
-
-fn build_status_text(
-    visible_count: i32,
-    total_count: i32,
-    filter_query: &str,
-    primary_entry: Option<&DirectoryEntry>,
-    primary_visible: bool,
-    selected_count: usize,
-    _operation_count: usize,
-) -> SharedString {
-    if selected_count > 1 {
-        return SharedString::from(format!("{} items selected", selected_count));
-    }
-
-    if let Some(entry) = primary_entry {
-        if selected_count == 0 {
-            return SharedString::from(format!("Focused: {}", entry.name));
-        }
-
-        if !primary_visible {
-            return SharedString::from(format!(
-                "{} is hidden by the current filter",
-                entry.name
-            ));
-        }
-
-        if entry.is_dir {
-            return SharedString::from(format!(
-                "Folder {} selected. Double-click or use Open",
-                entry.name
-            ));
-        }
-
-        return SharedString::from(format!("File {} selected", entry.name));
-    }
-
-    if filter_query.is_empty() {
-        SharedString::from(format!("{} item(s) loaded", visible_count))
-    } else {
-        SharedString::from(format!(
-            "{} of {} item(s) match \"{}\"",
-            visible_count, total_count, filter_query
-        ))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_status_text_reports_hidden_primary_selection() {
+        let entry = DirectoryEntry {
+            path: PathBuf::from("/workspace/notes.txt"),
+            name: "notes.txt".to_string(),
+            name_lower: "notes.txt".to_string(),
+            path_label: "/workspace/notes.txt".to_string(),
+            kind_label: "File".to_string(),
+            is_dir: false,
+            size_bytes: 12,
+            size_label: "12 B".to_string(),
+        };
+
+        let text = view::build_status_text(0, 3, "abc", Some(&entry), false, 1, 1);
+
+        assert_eq!(text.as_str(), "notes.txt is hidden by the current filter");
+    }
 
     #[test]
     fn drag_selection_replaces_selection_without_modifiers() {
