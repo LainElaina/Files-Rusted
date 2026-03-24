@@ -755,7 +755,7 @@ export component AppWindow inherits Window {
                     background: #f0f4f6;
                     border-width: 1px;
                     border-color: #dde5e9;
-                    min-height: 52px;
+                    height: 52px;
 
                     HorizontalBox {
                         padding-left: 16px;
@@ -972,46 +972,6 @@ export component AppWindow inherits Window {
                     file-list := ListView {
                         width: parent.width;
                         height: parent.height;
-                        viewport-y: root.drag-scroll-position * 1px;
-
-                        changed y => {
-                            root.update-drag-scroll-viewport(
-                                self.y / 1px,
-                                self.height / 1px,
-                                root.drag-scroll-position,
-                                root.drag-scroll-max-position,
-                            );
-                        }
-                        changed height => {
-                            root.drag-scroll-max-position = Math.max(0, self.viewport-height / 1px - self.height / 1px);
-                            root.drag-scroll-position = Math.max(0, Math.min(root.drag-scroll-position, root.drag-scroll-max-position));
-                            root.update-drag-scroll-viewport(
-                                self.y / 1px,
-                                self.height / 1px,
-                                root.drag-scroll-position,
-                                root.drag-scroll-max-position,
-                            );
-                        }
-                        changed viewport-y => {
-                            root.drag-scroll-position = self.viewport-y / 1px;
-                            root.drag-scroll-max-position = Math.max(0, self.viewport-height / 1px - self.height / 1px);
-                            root.update-drag-scroll-viewport(
-                                self.y / 1px,
-                                self.height / 1px,
-                                root.drag-scroll-position,
-                                root.drag-scroll-max-position,
-                            );
-                        }
-                        changed viewport-height => {
-                            root.drag-scroll-max-position = Math.max(0, self.viewport-height / 1px - self.height / 1px);
-                            root.drag-scroll-position = Math.max(0, Math.min(root.drag-scroll-position, root.drag-scroll-max-position));
-                            root.update-drag-scroll-viewport(
-                                self.y / 1px,
-                                self.height / 1px,
-                                root.drag-scroll-position,
-                                root.drag-scroll-max-position,
-                            );
-                        }
 
                         for entry[i] in root.file-items : FileCard {
                             width: parent.width;
