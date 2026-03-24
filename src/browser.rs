@@ -813,105 +813,51 @@ impl BrowserState {
         let current_dir = self.current_dir.borrow().clone();
         let filter_query = self.filter_query.borrow().clone();
         let sort_mode = *self.sort_mode.borrow();
-        let loaded_entries = self.loaded_entries.borrow();
-        let total_count = loaded_entries.len() as i32;
-
-        let loaded_paths = loaded_entries
-            .iter()
-            .map(|entry| entry.path.clone())
-            .collect::<Vec<_>>();
-        self.selection_state
-            .borrow_mut()
-            .reconcile_selection(&loaded_paths);
-
-        let effective_filter = filter_query.trim().to_lowercase();
-        let mut visible_entries = loaded_entries
-            .iter()
-            .filter(|entry| {
-                effective_filter.is_empty() || entry.name_lower.contains(&effective_filter)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-
-        visible_entries.sort_by(|left, right| sort_mode.compare(left, right));
-
-        let visible_paths = visible_entries
-            .iter()
-            .map(|entry| entry.path.clone())
-            .collect::<Vec<_>>();
-        let visible_count = visible_paths.len() as i32;
-
-        let primary_selected = self.selection_state.borrow().primary_selected_path().cloned();
-        let selected_paths = self.selection_state.borrow().selected_paths().to_vec();
-        let selected_lookup = selected_paths.iter().cloned().collect::<std::collections::HashSet<_>>();
-        let selected_count = selected_paths.len();
-        let operation_paths = self.selection_state.borrow().selected_items_for_operation();
-        let operation_count = operation_paths.len();
-
-        let focused_index = primary_selected
-            .as_ref()
-            .and_then(|path| visible_paths.iter().position(|candidate| candidate == path))
-            .map(|index| index as i32)
-            .unwrap_or(-1);
-        let primary_visible = focused_index >= 0;
-        let primary_entry = primary_selected
-            .as_ref()
-            .and_then(|path| loaded_entries.iter().find(|entry| entry.path == *path));
         let rename_mode = *self.rename_mode.borrow();
         let rename_draft = self.rename_draft.borrow().clone();
 
-        let selection_text = view::build_selection_text(
-            selected_count,
-            operation_count,
-            primary_entry,
-            primary_visible,
+        let mut derived = {
+            let loaded_entries = self.loaded_entries.borrow();
+            let selection_state = self.selection_state.borrow();
+            view::build_browser_view(
+                &loaded_entries,
+                sort_mode,
+                &filter_query,
+                &selection_state,
+                rename_mode,
+                &rename_draft,
+                self.pending_transfer.borrow().is_some(),
+            )
+        };
+
+        self.selection_state.borrow_mut().set_explicit_selection(
+            derived.selected_paths,
+            derived.primary_selected_path,
+            derived.selection_anchor_path,
         );
-        let status_text = self
-            .status_override
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| {
-                view::build_status_text(
-                    visible_count,
-                    total_count,
-                    filter_query.trim(),
-                    primary_entry,
-                    primary_visible,
-                    selected_count,
-                    operation_count,
-                )
-                .to_string()
-            });
 
-        let file_rows = visible_entries
-            .into_iter()
-            .map(|entry| {
-                let selected = selected_lookup.contains(&entry.path);
-                let focused = primary_selected
-                    .as_ref()
-                    .is_some_and(|path| path == &entry.path);
-                entry.into_view(selected, focused)
-            })
-            .collect::<Vec<_>>();
+        if let Some(status_override) = self.status_override.borrow().clone() {
+            derived.status_text = SharedString::from(status_override);
+        }
 
-        *self.visible_paths.borrow_mut() = visible_paths;
-        file_model.set_vec(file_rows);
+        *self.visible_paths.borrow_mut() = derived.visible_paths;
+        file_model.set_vec(derived.file_rows);
 
         self.update_breadcrumbs(window, &current_dir);
         window.set_current_path(SharedString::from(current_dir.display().to_string()));
-        window.set_item_count(visible_count);
-        window.set_total_item_count(total_count);
-        window.set_selected_file_index(focused_index);
-        window.set_selection_text(selection_text);
-        window.set_status_text(SharedString::from(status_text));
+        window.set_item_count(derived.visible_count);
+        window.set_total_item_count(derived.total_count);
+        window.set_selected_file_index(derived.focused_index);
+        window.set_selection_text(derived.selection_text);
+        window.set_status_text(derived.status_text);
         window.set_clipboard_text(SharedString::from(self.clipboard_text()));
-        window.set_can_open_selection(operation_count > 0);
-        window.set_can_rename_selection(operation_count == 1);
-        window.set_can_delete_selection(operation_count > 0);
-        window.set_can_transfer_selection(operation_count > 0);
+        window.set_can_open_selection(derived.can_open_selection);
+        window.set_can_rename_selection(derived.can_rename_selection);
+        window.set_can_delete_selection(derived.can_delete_selection);
+        window.set_can_transfer_selection(derived.can_transfer_selection);
         window.set_can_paste(self.pending_transfer.borrow().is_some());
-        window.set_rename_mode(rename_mode && operation_count == 1);
-        window.set_rename_draft(SharedString::from(rename_draft));
+        window.set_rename_mode(derived.rename_mode);
+        window.set_rename_draft(derived.rename_draft);
         if let Some(rect) = *self.drag_selection_rect.borrow() {
             window.set_drag_selection_active(true);
             window.set_drag_selection_x(rect.x);
@@ -1416,6 +1362,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn build_browser_view_filters_rows_and_keeps_focus_index() {
+        let entries = vec![
+            directory_entry("/workspace/zeta.txt", false, 20),
+            directory_entry("/workspace/alpha.txt", false, 10),
+            directory_entry("/workspace/docs", true, 0),
+        ];
+
+        let selection = SelectionState::default();
+        let view = view::build_browser_view(
+            &entries,
+            SortMode::NameAsc,
+            "alp",
+            &selection,
+            false,
+            "",
+            false,
+        );
+
+        assert_eq!(view.visible_count, 1);
+        assert_eq!(view.total_count, 3);
+        assert_eq!(view.focused_index, -1);
+        assert_eq!(view.file_rows.len(), 1);
+        assert_eq!(view.file_rows[0].name.as_str(), "alpha.txt");
+        assert!(!view.can_open_selection);
+        assert!(!view.can_rename_selection);
+    }
+
+    #[test]
     fn build_status_text_reports_hidden_primary_selection() {
         let entry = DirectoryEntry {
             path: PathBuf::from("/workspace/notes.txt"),
@@ -1880,6 +1854,29 @@ mod tests {
             selected,
             primary,
             anchor,
+        }
+    }
+
+    fn directory_entry(path: &str, is_dir: bool, size_bytes: u64) -> DirectoryEntry {
+        let path = PathBuf::from(path);
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        DirectoryEntry {
+            path: path.clone(),
+            name: name.clone(),
+            name_lower: name.to_lowercase(),
+            path_label: path.display().to_string(),
+            kind_label: if is_dir {
+                "Folder".to_string()
+            } else {
+                "File".to_string()
+            },
+            is_dir,
+            size_bytes,
+            size_label: format!("{} B", size_bytes),
         }
     }
 }
