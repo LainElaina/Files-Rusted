@@ -132,8 +132,10 @@ impl BrowserState {
                     &self.sidebar_paths,
                     &current_dir,
                 ));
-                window.set_can_navigate_back(!self.back_history.borrow().is_empty());
-                window.set_can_navigate_forward(!self.forward_history.borrow().is_empty());
+                let can_navigate_back = !self.back_history.borrow().is_empty();
+                let can_navigate_forward = !self.forward_history.borrow().is_empty();
+                window.set_can_navigate_back(can_navigate_back);
+                window.set_can_navigate_forward(can_navigate_forward);
             }
         }
     }
@@ -189,10 +191,11 @@ impl BrowserState {
         window: &AppWindow,
         file_model: &VecModel<FileEntry>,
     ) {
-        let index = index.max(0) as usize;
-        if let Some(target) = self.breadcrumb_paths.borrow().get(index).cloned() {
-            self.navigate_to(target, NavigationMode::PushCurrent, window, file_model);
-        }
+        let Some(target) = self.breadcrumb_target(index) else {
+            return;
+        };
+
+        self.navigate_to(target, NavigationMode::PushCurrent, window, file_model);
     }
 
     pub fn activate_file(
@@ -861,6 +864,11 @@ impl BrowserState {
 
         let derived = self.apply_view_to_state_and_model(file_model);
 
+        let can_paste = self.pending_transfer.borrow().is_some();
+        let drag_selection_rect = *self.drag_selection_rect.borrow();
+        let can_navigate_back = !self.back_history.borrow().is_empty();
+        let can_navigate_forward = !self.forward_history.borrow().is_empty();
+
         self.update_breadcrumbs(window, &current_dir);
         window.set_current_path(SharedString::from(current_dir.display().to_string()));
         window.set_item_count(derived.visible_count);
@@ -873,10 +881,10 @@ impl BrowserState {
         window.set_can_rename_selection(derived.can_rename_selection);
         window.set_can_delete_selection(derived.can_delete_selection);
         window.set_can_transfer_selection(derived.can_transfer_selection);
-        window.set_can_paste(self.pending_transfer.borrow().is_some());
+        window.set_can_paste(can_paste);
         window.set_rename_mode(derived.rename_mode);
         window.set_rename_draft(derived.rename_draft);
-        if let Some(rect) = *self.drag_selection_rect.borrow() {
+        if let Some(rect) = drag_selection_rect {
             window.set_drag_selection_active(true);
             window.set_drag_selection_x(rect.x);
             window.set_drag_selection_y(rect.y);
@@ -895,8 +903,8 @@ impl BrowserState {
         ));
         window.set_filter_text(SharedString::from(filter_query));
         window.set_current_sort_index(sort_mode.index());
-        window.set_can_navigate_back(!self.back_history.borrow().is_empty());
-        window.set_can_navigate_forward(!self.forward_history.borrow().is_empty());
+        window.set_can_navigate_back(can_navigate_back);
+        window.set_can_navigate_forward(can_navigate_forward);
     }
 
     fn drag_snapshot(&self) -> DragSelectionSnapshot {
@@ -1118,7 +1126,10 @@ impl BrowserState {
 
     fn update_breadcrumbs(&self, window: &AppWindow, current_dir: &Path) {
         let (items, paths) = build_breadcrumbs(current_dir);
-        *self.breadcrumb_paths.borrow_mut() = paths;
+        {
+            let mut breadcrumb_paths = self.breadcrumb_paths.borrow_mut();
+            *breadcrumb_paths = paths;
+        }
         window.set_breadcrumb_items(ModelRc::from(Rc::new(VecModel::from(items))));
     }
 
@@ -1265,6 +1276,12 @@ impl BrowserState {
 
     fn clear_status_override(&self) {
         self.status_override.borrow_mut().take();
+    }
+
+    fn breadcrumb_target(&self, index: i32) -> Option<PathBuf> {
+        let index = index.max(0) as usize;
+        let breadcrumb_paths = self.breadcrumb_paths.borrow();
+        breadcrumb_paths.get(index).cloned()
     }
 
     fn path_at_visible_index(&self, index: i32) -> Option<PathBuf> {
@@ -1932,6 +1949,24 @@ mod tests {
             view.status_text.as_str(),
             "beta.txt is hidden by the current filter"
         );
+    }
+
+    #[test]
+    fn breadcrumb_target_lookup_does_not_hold_refcell_borrow_across_followup_mutation() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        *state.breadcrumb_paths.borrow_mut() = vec![
+            PathBuf::from("/workspace"),
+            PathBuf::from("/workspace/docs"),
+        ];
+
+        let target = state
+            .breadcrumb_target(1)
+            .expect("breadcrumb target should exist");
+
+        *state.breadcrumb_paths.borrow_mut() = vec![PathBuf::from("/workspace/next")];
+
+        assert_eq!(target, PathBuf::from("/workspace/docs"));
     }
 
     #[test]
