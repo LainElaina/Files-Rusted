@@ -19,24 +19,24 @@ export struct BreadcrumbEntry {
 }
 
 component ToolbarButton inherits Button {
-    min-width: 92px;
-    min-height: 40px;
+    min-width: 84px;
+    min-height: 34px;
 }
 
 component BreadcrumbChip inherits Rectangle {
     in property<string> label;
     callback activated;
 
-    height: 36px;
-    border-radius: 14px;
+    height: 30px;
+    border-radius: 10px;
     border-width: 1px;
     border-color: #d5dee5;
     background: #f6fafc;
 
     Text {
         text: label;
-        x: 14px;
-        y: 9px;
+        x: 10px;
+        y: 7px;
         color: #274052;
         font-weight: 600;
     }
@@ -53,15 +53,15 @@ component SidebarCard inherits Rectangle {
     in property<bool> selected: false;
     callback activated;
 
-    height: 72px;
-    border-radius: 18px;
+    height: 56px;
+    border-radius: 12px;
     border-width: selected ? 0px : 1px;
     border-color: #d5dbdf;
     background: selected ? #143448 : #fbfcf9;
 
     VerticalBox {
-        padding: 14px;
-        spacing: 4px;
+        padding: 10px;
+        spacing: 2px;
 
         Text {
             text: entry.label;
@@ -93,38 +93,38 @@ component FileCard inherits Rectangle {
     callback rename-requested;
     callback delete-requested;
 
-    height: 84px;
-    border-radius: 18px;
+    height: 52px;
+    border-radius: 10px;
     border-width: 1px;
     border-color: entry.focused ? #224661 : (entry.selected ? #6d8fa6 : (entry.kind == "Folder" ? #d7d7a8 : #d9dde2));
     background: entry.selected ? #d9e9f3 : (entry.focused ? #edf6fb : (entry.kind == "Folder" ? #fffbe4 : #ffffff));
 
     Rectangle {
-        width: 6px;
-        height: parent.height - 20px;
-        x: 10px;
-        y: 10px;
-        border-radius: 3px;
+        width: 4px;
+        height: parent.height - 12px;
+        x: 6px;
+        y: 6px;
+        border-radius: 2px;
         background: entry.focused ? #163b57 : (entry.selected ? #84a8c2 : transparent);
     }
 
     HorizontalBox {
-        padding-left: 24px;
-        padding-right: 16px;
-        padding-top: 16px;
-        padding-bottom: 16px;
-        spacing: 14px;
+        padding-left: 14px;
+        padding-right: 10px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 10px;
 
         Rectangle {
-            width: 54px;
-            height: 54px;
-            border-radius: 14px;
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
             background: entry.kind == "Folder" ? #f1c24f : #d9e3ec;
 
             Text {
                 text: entry.kind == "Folder" ? "DIR" : "FILE";
                 color: entry.kind == "Folder" ? #473300 : #294055;
-                font-size: 12px;
+                font-size: 10px;
                 font-weight: 700;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -133,11 +133,11 @@ component FileCard inherits Rectangle {
 
         VerticalBox {
             alignment: start;
-            spacing: 4px;
+            spacing: 1px;
 
             Text {
                 text: entry.name;
-                font-size: 17px;
+                font-size: 14px;
                 font-weight: 700;
                 color: entry.focused ? #173245 : #1f2d39;
                 wrap: word-wrap;
@@ -145,6 +145,7 @@ component FileCard inherits Rectangle {
 
             Text {
                 text: entry.path;
+                font-size: 11px;
                 color: #6a7883;
                 wrap: word-wrap;
             }
@@ -157,16 +158,18 @@ component FileCard inherits Rectangle {
 
         VerticalBox {
             alignment: center;
-            spacing: 6px;
+            spacing: 2px;
 
             Text {
                 text: entry.kind;
+                font-size: 12px;
                 color: entry.focused ? #173245 : #314352;
                 horizontal-alignment: right;
             }
 
             Text {
                 text: entry.size;
+                font-size: 12px;
                 font-weight: 600;
                 color: entry.focused ? #365266 : #687784;
                 horizontal-alignment: right;
@@ -391,19 +394,19 @@ export component AppWindow inherits Window {
         x: 0;
         y: 0;
         width: parent.width;
-        height: 196px;
+        height: 168px;
         background: #173449;
 
         VerticalBox {
-            padding-left: 28px;
-            padding-right: 28px;
-            padding-top: 22px;
-            padding-bottom: 26px;
-            spacing: 18px;
+            padding-left: 22px;
+            padding-right: 22px;
+            padding-top: 14px;
+            padding-bottom: 16px;
+            spacing: 10px;
 
             Text {
                 text: "Files Rusted";
-                font-size: 30px;
+                font-size: 24px;
                 font-weight: 800;
                 color: #f4f6f8;
             }
@@ -415,7 +418,7 @@ export component AppWindow inherits Window {
             }
 
             HorizontalBox {
-                spacing: 10px;
+                spacing: 8px;
 
                 ToolbarButton {
                     enabled: root.can-navigate-back;
@@ -487,16 +490,16 @@ export component AppWindow inherits Window {
                 }
 
                 Rectangle {
-                    min-width: 430px;
-                    height: 48px;
-                    border-radius: 16px;
+                    min-width: 360px;
+                    height: 38px;
+                    border-radius: 12px;
                     background: #24465c;
 
                     Text {
                         text: root.current-path;
-                        x: 16px;
-                        y: 14px;
-                        width: parent.width - 32px;
+                        x: 12px;
+                        y: 10px;
+                        width: parent.width - 24px;
                         color: #f5f7f9;
                         wrap: word-wrap;
                     }
@@ -506,26 +509,26 @@ export component AppWindow inherits Window {
     }
 
     HorizontalBox {
-        x: 24px;
-        y: 148px;
-        width: parent.width - 48px;
-        height: parent.height - 172px;
-        spacing: 20px;
+        x: 18px;
+        y: 124px;
+        width: parent.width - 36px;
+        height: parent.height - 138px;
+        spacing: 14px;
 
         Rectangle {
-            width: 286px;
-            border-radius: 28px;
+            width: 252px;
+            border-radius: 18px;
             background: #f6f7f2;
             border-width: 1px;
             border-color: #d8ddd8;
 
             VerticalBox {
-                padding: 22px;
-                spacing: 18px;
+                padding: 14px;
+                spacing: 10px;
 
                 Text {
                     text: "Quick Access";
-                    font-size: 20px;
+                    font-size: 17px;
                     font-weight: 700;
                     color: #1d2a37;
                 }
@@ -551,7 +554,7 @@ export component AppWindow inherits Window {
 
         Rectangle {
             horizontal-stretch: 1;
-            border-radius: 28px;
+            border-radius: 18px;
             background: #f9faf7;
             border-width: 1px;
             border-color: #d8ddd8;
@@ -650,18 +653,18 @@ export component AppWindow inherits Window {
             }
 
             VerticalBox {
-                padding: 24px;
-                spacing: 18px;
+                padding: 14px;
+                spacing: 10px;
 
                 HorizontalBox {
-                    spacing: 14px;
+                    spacing: 10px;
 
                     VerticalBox {
-                        spacing: 6px;
+                        spacing: 2px;
 
                         Text {
                             text: "Directory Snapshot";
-                            font-size: 22px;
+                            font-size: 18px;
                             font-weight: 800;
                             color: #1d2b37;
                         }
@@ -678,16 +681,16 @@ export component AppWindow inherits Window {
                     }
 
                     Rectangle {
-                        min-width: 240px;
-                        height: 56px;
-                        border-radius: 16px;
+                        min-width: 210px;
+                        height: 42px;
+                        border-radius: 12px;
                         background: #eef3f5;
 
                         Text {
                             text: root.status-text;
-                            x: 16px;
-                            y: 10px;
-                            width: parent.width - 32px;
+                            x: 12px;
+                            y: 8px;
+                            width: parent.width - 24px;
                             color: #385061;
                             wrap: word-wrap;
                         }
@@ -695,21 +698,21 @@ export component AppWindow inherits Window {
                 }
 
                 Rectangle {
-                    border-radius: 18px;
+                    border-radius: 12px;
                     background: #f5f8f8;
                     border-width: 1px;
                     border-color: #dde4df;
-                    min-height: 56px;
+                    min-height: 42px;
 
                     HorizontalBox {
-                        padding-left: 14px;
-                        padding-right: 14px;
-                        padding-top: 10px;
-                        padding-bottom: 10px;
-                        spacing: 8px;
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-top: 6px;
+                        padding-bottom: 6px;
+                        spacing: 6px;
 
                         for crumb[i] in root.breadcrumb-items : HorizontalBox {
-                            spacing: 8px;
+                            spacing: 6px;
 
                             if i > 0 : Text {
                                 text: ">";
@@ -728,7 +731,7 @@ export component AppWindow inherits Window {
                 }
 
                 HorizontalBox {
-                    spacing: 14px;
+                    spacing: 10px;
 
                     LineEdit {
                         text <=> root.filter-text;
@@ -739,7 +742,7 @@ export component AppWindow inherits Window {
                     }
 
                     ComboBox {
-                        width: 220px;
+                        width: 190px;
                         model: root.sort-options;
                         current-index <=> root.current-sort-index;
                         changed current-index => {
@@ -749,21 +752,21 @@ export component AppWindow inherits Window {
                 }
 
                 Rectangle {
-                    border-radius: 18px;
+                    border-radius: 12px;
                     background: #f0f4f6;
                     border-width: 1px;
                     border-color: #dde5e9;
-                    height: 52px;
+                    height: 44px;
 
                     HorizontalBox {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                        padding-top: 10px;
-                        padding-bottom: 10px;
-                        spacing: 12px;
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-top: 6px;
+                        padding-bottom: 6px;
+                        spacing: 8px;
 
                         VerticalBox {
-                            spacing: 4px;
+                            spacing: 1px;
 
                             Text {
                                 text: root.selection-text;
@@ -826,18 +829,18 @@ export component AppWindow inherits Window {
                 }
 
                 if root.rename-mode : Rectangle {
-                    border-radius: 18px;
+                    border-radius: 12px;
                     background: #fff7df;
                     border-width: 1px;
                     border-color: #ead39a;
-                    min-height: 60px;
+                    min-height: 48px;
 
                     HorizontalBox {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                        padding-top: 10px;
-                        padding-bottom: 10px;
-                        spacing: 12px;
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-top: 6px;
+                        padding-bottom: 6px;
+                        spacing: 8px;
 
                         Text {
                             text: "Rename to";
@@ -871,18 +874,18 @@ export component AppWindow inherits Window {
                 }
 
                 Rectangle {
-                    border-radius: 20px;
+                    border-radius: 12px;
                     background: #eef2ee;
                     border-width: 1px;
                     border-color: #dde2db;
-                    min-height: 56px;
+                    min-height: 42px;
 
                     HorizontalBox {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                        padding-top: 16px;
-                        padding-bottom: 16px;
-                        spacing: 12px;
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                        spacing: 10px;
 
                         Text {
                             text: "Name";
@@ -913,7 +916,7 @@ export component AppWindow inherits Window {
                 }
 
                 if root.item-count == 0 : Rectangle {
-                    border-radius: 24px;
+                    border-radius: 16px;
                     background: #f0f3ef;
                     border-width: 1px;
                     border-color: #dde2db;
