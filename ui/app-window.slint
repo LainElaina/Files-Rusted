@@ -23,6 +23,11 @@ component ToolbarButton inherits Button {
     min-height: 30px;
 }
 
+component NavButton inherits Button {
+    min-width: 36px;
+    min-height: 30px;
+}
+
 component BreadcrumbChip inherits Rectangle {
     in property<string> label;
     callback activated;
@@ -116,9 +121,9 @@ component FileCard inherits Rectangle {
 
         Text {
             width: 16px;
-            text: entry.kind == "Folder" ? "▸" : "•";
+            text: entry.kind == "Folder" ? "🗀" : "🗋";
             color: entry.kind == "Folder" ? #4d6a80 : #6f7f8d;
-            font-size: 12px;
+            font-size: 13px;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -391,7 +396,7 @@ export component AppWindow inherits Window {
             padding-bottom: 4px;
             spacing: 6px;
 
-            ToolbarButton {
+            NavButton {
                 enabled: root.can-navigate-back;
                 text: "←";
                 clicked => {
@@ -399,7 +404,7 @@ export component AppWindow inherits Window {
                 }
             }
 
-            ToolbarButton {
+            NavButton {
                 enabled: root.can-navigate-forward;
                 text: "→";
                 clicked => {
@@ -407,21 +412,21 @@ export component AppWindow inherits Window {
                 }
             }
 
-            ToolbarButton {
+            NavButton {
                 text: "⌂";
                 clicked => {
                     root.navigate-home();
                 }
             }
 
-            ToolbarButton {
+            NavButton {
                 text: "↑";
                 clicked => {
                     root.navigate-up();
                 }
             }
 
-            ToolbarButton {
+            NavButton {
                 text: "⟳";
                 clicked => {
                     root.refresh-directory();
@@ -429,11 +434,12 @@ export component AppWindow inherits Window {
             }
 
             Rectangle {
-                min-width: 10px;
+                min-width: 4px;
                 background: transparent;
             }
 
             Rectangle {
+                min-width: 240px;
                 horizontal-stretch: 1;
                 clip: true;
                 border-radius: 6px;
@@ -735,6 +741,34 @@ export component AppWindow inherits Window {
                             text: "Cut";
                             clicked => {
                                 root.request-cut();
+                            }
+                        }
+
+                        Rectangle {
+                            width: 1px;
+                            height: 20px;
+                            background: #cfd9e1;
+                        }
+
+                        ToolbarButton {
+                            enabled: root.can-paste;
+                            text: "Paste";
+                            clicked => {
+                                root.paste-into-current-directory();
+                            }
+                        }
+
+                        ToolbarButton {
+                            text: "New File";
+                            clicked => {
+                                root.create-file();
+                            }
+                        }
+
+                        ToolbarButton {
+                            text: "New Folder";
+                            clicked => {
+                                root.create-folder();
                             }
                         }
 
