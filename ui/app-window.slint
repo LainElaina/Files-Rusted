@@ -24,7 +24,7 @@ component ToolbarButton inherits Button {
 }
 
 component NavButton inherits Button {
-    min-width: 34px;
+    min-width: 30px;
     min-height: 30px;
 }
 
@@ -102,8 +102,8 @@ component SidebarCard inherits Rectangle {
 
 component FileCard inherits Rectangle {
     in property<FileEntry> entry;
-    in property<length> type-column-width: 74px;
-    in property<length> size-column-width: 70px;
+    in property<length> type-column-width: 64px;
+    in property<length> size-column-width: 58px;
     callback activated(bool, bool);
     callback open-requested;
     callback copy-requested;
@@ -266,8 +266,8 @@ export component AppWindow inherits Window {
     in-out property<[FileEntry]> file-items;
     in-out property<[BreadcrumbEntry]> breadcrumb-items;
     in-out property<[string]> sort-options;
-    in property<length> type-column-width: 74px;
-    in property<length> size-column-width: 70px;
+    in property<length> type-column-width: 64px;
+    in property<length> size-column-width: 58px;
 
     callback create-file();
     callback request-copy();
@@ -385,67 +385,82 @@ export component AppWindow inherits Window {
         }
     }
 
-    Rectangle {
+    top-toolbar := Rectangle {
         x: 0;
         y: 0;
         width: parent.width;
-        height: 40px;
+        min-height: 40px;
         background: #eef2f5;
         border-width: 1px;
         border-color: #d8dfe5;
 
-        HorizontalBox {
+        VerticalBox {
             padding-left: 8px;
             padding-right: 8px;
             padding-top: 4px;
             padding-bottom: 4px;
-            spacing: 6px;
+            spacing: 4px;
 
-            NavButton {
-                enabled: root.can-navigate-back;
-                text: "←";
-                clicked => {
-                    root.navigate-back();
+            HorizontalBox {
+                spacing: 6px;
+
+                NavButton {
+                    enabled: root.can-navigate-back;
+                    text: "←";
+                    clicked => {
+                        root.navigate-back();
+                    }
                 }
-            }
 
-            NavButton {
-                enabled: root.can-navigate-forward;
-                text: "→";
-                clicked => {
-                    root.navigate-forward();
+                NavButton {
+                    enabled: root.can-navigate-forward;
+                    text: "→";
+                    clicked => {
+                        root.navigate-forward();
+                    }
                 }
-            }
 
-            NavButton {
-                text: "⌂";
-                clicked => {
-                    root.navigate-home();
+                NavButton {
+                    text: "⌂";
+                    clicked => {
+                        root.navigate-home();
+                    }
                 }
-            }
 
-            NavButton {
-                text: "↑";
-                clicked => {
-                    root.navigate-up();
+                NavButton {
+                    text: "↑";
+                    clicked => {
+                        root.navigate-up();
+                    }
                 }
-            }
 
-            NavButton {
-                text: "⟳";
-                clicked => {
-                    root.refresh-directory();
+                NavButton {
+                    text: "⟳";
+                    clicked => {
+                        root.refresh-directory();
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: transparent;
+                }
+
+                LineEdit {
+                    min-width: 92px;
+                    max-width: 180px;
+                    horizontal-stretch: 1;
+                    text <=> root.filter-text;
+                    placeholder-text: "Filter";
+                    edited(value) => {
+                        root.filter-updated(value);
+                    }
                 }
             }
 
             Rectangle {
-                min-width: 3px;
-                background: transparent;
-            }
-
-            Rectangle {
-                min-width: 120px;
-                horizontal-stretch: 2;
+                min-width: 72px;
+                horizontal-stretch: 1;
                 clip: true;
                 border-radius: 6px;
                 border-width: 1px;
@@ -478,30 +493,19 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-
-            LineEdit {
-                min-width: 120px;
-                max-width: 220px;
-                horizontal-stretch: 1;
-                text <=> root.filter-text;
-                placeholder-text: "Filter";
-                edited(value) => {
-                    root.filter-updated(value);
-                }
-            }
         }
     }
 
     HorizontalBox {
         x: 12px;
-        y: 48px;
+        y: top-toolbar.height + 8px;
         width: parent.width - 24px;
-        height: parent.height - 60px;
+        height: parent.height - top-toolbar.height - 20px;
         spacing: 12px;
 
         Rectangle {
-            min-width: 220px;
-            max-width: 244px;
+            min-width: 184px;
+            max-width: 220px;
             border-radius: 18px;
             background: #f6f7f2;
             border-width: 1px;
@@ -702,104 +706,105 @@ export component AppWindow inherits Window {
                     border-color: #dde5e9;
                     min-height: 44px;
 
-                    HorizontalBox {
+                    VerticalBox {
                         padding-left: 10px;
                         padding-right: 10px;
                         padding-top: 6px;
                         padding-bottom: 6px;
-                        spacing: 6px;
+                        spacing: 4px;
 
-                        VerticalBox {
-                            min-width: 120px;
-                            horizontal-stretch: 1;
-                            spacing: 1px;
+                        HorizontalBox {
+                            spacing: 6px;
 
-                            Text {
-                                text: root.selection-text;
-                                color: #3a5161;
-                                wrap: word-wrap;
-                                overflow: elide;
+                            VerticalBox {
+                                min-width: 80px;
+                                horizontal-stretch: 1;
+                                spacing: 1px;
+
+                                Text {
+                                    text: root.selection-text;
+                                    color: #3a5161;
+                                    wrap: no-wrap;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: root.clipboard-text;
+                                    color: #6d7c88;
+                                    wrap: no-wrap;
+                                    overflow: elide;
+                                }
                             }
 
-                            Text {
-                                text: root.clipboard-text;
-                                color: #6d7c88;
-                                wrap: word-wrap;
-                                overflow: elide;
+                            ToolbarButton {
+                                enabled: root.can-paste;
+                                text: "Paste";
+                                clicked => {
+                                    root.paste-into-current-directory();
+                                }
                             }
-                        }
 
-                        Rectangle {
-                            width: 1px;
-                            height: 20px;
-                            background: #cfd9e1;
-                        }
-
-                        ToolbarButton {
-                            enabled: root.can-paste;
-                            text: "Paste";
-                            clicked => {
-                                root.paste-into-current-directory();
+                            ToolbarButton {
+                                text: "New File";
+                                clicked => {
+                                    root.create-file();
+                                }
                             }
-                        }
 
-                        ToolbarButton {
-                            text: "New File";
-                            clicked => {
-                                root.create-file();
-                            }
-                        }
-
-                        ToolbarButton {
-                            text: "New Folder";
-                            clicked => {
-                                root.create-folder();
+                            ToolbarButton {
+                                text: "New Folder";
+                                clicked => {
+                                    root.create-folder();
+                                }
                             }
                         }
 
-                        Rectangle {
-                            width: 1px;
-                            height: 20px;
-                            background: #cfd9e1;
-                        }
+                        HorizontalBox {
+                            spacing: 6px;
 
-                        SecondaryActionButton {
-                            enabled: root.can-open-selection;
-                            text: "Open";
-                            clicked => {
-                                root.open-selected();
+                            SecondaryActionButton {
+                                enabled: root.can-open-selection;
+                                text: "Open";
+                                clicked => {
+                                    root.open-selected();
+                                }
                             }
-                        }
 
-                        SecondaryActionButton {
-                            enabled: root.can-transfer-selection;
-                            text: "Copy";
-                            clicked => {
-                                root.request-copy();
+                            SecondaryActionButton {
+                                enabled: root.can-transfer-selection;
+                                text: "Copy";
+                                clicked => {
+                                    root.request-copy();
+                                }
                             }
-                        }
 
-                        SecondaryActionButton {
-                            enabled: root.can-transfer-selection;
-                            text: "Cut";
-                            clicked => {
-                                root.request-cut();
+                            SecondaryActionButton {
+                                enabled: root.can-transfer-selection;
+                                text: "Cut";
+                                clicked => {
+                                    root.request-cut();
+                                }
                             }
-                        }
 
-                        SecondaryActionButton {
-                            enabled: root.can-rename-selection;
-                            text: "Rename";
-                            clicked => {
-                                root.request-rename();
+                            SecondaryActionButton {
+                                enabled: root.can-rename-selection;
+                                text: "Rename";
+                                clicked => {
+                                    root.request-rename();
+                                }
                             }
-                        }
 
-                        SecondaryActionButton {
-                            enabled: root.can-delete-selection;
-                            text: "Delete";
-                            clicked => {
-                                root.delete-selected();
+                            SecondaryActionButton {
+                                enabled: root.can-delete-selection;
+                                text: "Delete";
+                                clicked => {
+                                    root.delete-selected();
+                                }
+                            }
+
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                background: transparent;
                             }
                         }
                     }
