@@ -28,6 +28,8 @@ component BreadcrumbChip inherits Rectangle {
     callback activated;
 
     height: 24px;
+    max-width: 180px;
+    clip: true;
     border-radius: 6px;
     border-width: 1px;
     border-color: #cfd7de;
@@ -37,9 +39,12 @@ component BreadcrumbChip inherits Rectangle {
         text: label;
         x: 8px;
         y: 4px;
+        width: parent.width - 16px;
         color: #2a3b48;
         font-size: 12px;
         font-weight: 500;
+        wrap: no-wrap;
+        overflow: elide;
     }
 
     TouchArea {
@@ -87,6 +92,8 @@ component SidebarCard inherits Rectangle {
 
 component FileCard inherits Rectangle {
     in property<FileEntry> entry;
+    in property<length> type-column-width: 88px;
+    in property<length> size-column-width: 86px;
     callback activated(bool, bool);
     callback open-requested;
     callback copy-requested;
@@ -132,7 +139,7 @@ component FileCard inherits Rectangle {
 
         Text {
             text: entry.kind;
-            width: 88px;
+            width: root.type-column-width;
             font-size: 12px;
             color: #5f6e7a;
             horizontal-alignment: right;
@@ -143,7 +150,7 @@ component FileCard inherits Rectangle {
 
         Text {
             text: entry.size;
-            width: 86px;
+            width: root.size-column-width;
             font-size: 12px;
             color: #5f6e7a;
             horizontal-alignment: right;
@@ -249,6 +256,8 @@ export component AppWindow inherits Window {
     in-out property<[FileEntry]> file-items;
     in-out property<[BreadcrumbEntry]> breadcrumb-items;
     in-out property<[string]> sort-options;
+    in property<length> type-column-width: 88px;
+    in property<length> size-column-width: 86px;
 
     callback create-file();
     callback request-copy();
@@ -426,6 +435,7 @@ export component AppWindow inherits Window {
 
             Rectangle {
                 horizontal-stretch: 1;
+                clip: true;
                 border-radius: 6px;
                 border-width: 1px;
                 border-color: #d4dce3;
@@ -440,6 +450,7 @@ export component AppWindow inherits Window {
 
                     for crumb[i] in root.breadcrumb-items : HorizontalBox {
                         spacing: 4px;
+                        min-width: 0px;
 
                         if i > 0 : Text {
                             text: "/";
@@ -494,7 +505,7 @@ export component AppWindow inherits Window {
                 }
 
                 Text {
-                    text: "先把关键入口和目录浏览跑通，再决定后续排序、筛选、选择模型怎么落。";
+                    text: "Browse common locations and shortcuts.";
                     wrap: word-wrap;
                     color: #64717c;
                 }
@@ -641,7 +652,7 @@ export component AppWindow inherits Window {
                     }
 
                     ComboBox {
-                        width: 190px;
+                        width: 170px;
                         model: root.sort-options;
                         current-index <=> root.current-sort-index;
                         changed current-index => {
@@ -650,7 +661,8 @@ export component AppWindow inherits Window {
                     }
 
                     Rectangle {
-                        min-width: 210px;
+                        min-width: 140px;
+                        horizontal-stretch: 1;
                         height: 42px;
                         border-radius: 12px;
                         background: #eef3f5;
@@ -658,10 +670,11 @@ export component AppWindow inherits Window {
                         Text {
                             text: root.status-text;
                             x: 12px;
-                            y: 8px;
+                            y: 12px;
                             width: parent.width - 24px;
                             color: #385061;
-                            wrap: word-wrap;
+                            wrap: no-wrap;
+                            overflow: elide;
                         }
                     }
                 }
@@ -790,17 +803,17 @@ export component AppWindow inherits Window {
 
                 Rectangle {
                     border-radius: 12px;
-                    background: #eef2ee;
+                    background: #f0f4f6;
                     border-width: 1px;
-                    border-color: #dde2db;
-                    min-height: 42px;
+                    border-color: #dde5e9;
+                    height: 44px;
 
                     HorizontalBox {
                         padding-left: 10px;
                         padding-right: 10px;
-                        padding-top: 10px;
-                        padding-bottom: 10px;
-                        spacing: 10px;
+                        padding-top: 6px;
+                        padding-bottom: 6px;
+                        spacing: 8px;
 
                         Text {
                             text: "Name";
@@ -816,16 +829,20 @@ export component AppWindow inherits Window {
 
                         Text {
                             text: "Type";
+                            width: root.type-column-width;
                             font-size: 14px;
                             font-weight: 700;
                             color: #52626f;
+                            horizontal-alignment: right;
                         }
 
                         Text {
                             text: "Size";
+                            width: root.size-column-width;
                             font-size: 14px;
                             font-weight: 700;
                             color: #52626f;
+                            horizontal-alignment: right;
                         }
                     }
                 }
@@ -850,7 +867,7 @@ export component AppWindow inherits Window {
                         }
 
                         Text {
-                            text: root.total-item-count == 0 ? "先保持浏览链路正确，再补排序、筛选、右键菜单和写操作。" : "调整筛选词或排序方式，看看当前目录里还有哪些结果。";
+                            text: root.total-item-count == 0 ? "Create a file or folder to get started." : "Adjust the filter or sort mode to view matching items.";
                             color: #64717c;
                             wrap: word-wrap;
                             horizontal-alignment: center;
@@ -926,6 +943,8 @@ export component AppWindow inherits Window {
                         for entry[i] in root.file-items : FileCard {
                             width: parent.width;
                             entry: entry;
+                            type-column-width: root.type-column-width;
+                            size-column-width: root.size-column-width;
 
                             changed x => {
                                 root.register-visible-item-layout(i, self.x / 1px, self.y / 1px, self.width / 1px, self.height / 1px);
