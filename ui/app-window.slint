@@ -19,13 +19,18 @@ export struct BreadcrumbEntry {
 }
 
 component ToolbarButton inherits Button {
-    min-width: 56px;
+    min-width: 48px;
     min-height: 30px;
 }
 
 component NavButton inherits Button {
-    min-width: 36px;
+    min-width: 34px;
     min-height: 30px;
+}
+
+component SecondaryActionButton inherits Button {
+    min-width: 40px;
+    min-height: 28px;
 }
 
 component BreadcrumbChip inherits Rectangle {
@@ -97,8 +102,8 @@ component SidebarCard inherits Rectangle {
 
 component FileCard inherits Rectangle {
     in property<FileEntry> entry;
-    in property<length> type-column-width: 88px;
-    in property<length> size-column-width: 86px;
+    in property<length> type-column-width: 74px;
+    in property<length> size-column-width: 70px;
     callback activated(bool, bool);
     callback open-requested;
     callback copy-requested;
@@ -261,8 +266,8 @@ export component AppWindow inherits Window {
     in-out property<[FileEntry]> file-items;
     in-out property<[BreadcrumbEntry]> breadcrumb-items;
     in-out property<[string]> sort-options;
-    in property<length> type-column-width: 88px;
-    in property<length> size-column-width: 86px;
+    in property<length> type-column-width: 74px;
+    in property<length> size-column-width: 70px;
 
     callback create-file();
     callback request-copy();
@@ -434,13 +439,13 @@ export component AppWindow inherits Window {
             }
 
             Rectangle {
-                min-width: 4px;
+                min-width: 3px;
                 background: transparent;
             }
 
             Rectangle {
-                min-width: 240px;
-                horizontal-stretch: 1;
+                min-width: 120px;
+                horizontal-stretch: 2;
                 clip: true;
                 border-radius: 6px;
                 border-width: 1px;
@@ -475,7 +480,9 @@ export component AppWindow inherits Window {
             }
 
             LineEdit {
-                width: 200px;
+                min-width: 120px;
+                max-width: 220px;
+                horizontal-stretch: 1;
                 text <=> root.filter-text;
                 placeholder-text: "Filter";
                 edited(value) => {
@@ -493,7 +500,8 @@ export component AppWindow inherits Window {
         spacing: 12px;
 
         Rectangle {
-            width: 252px;
+            min-width: 220px;
+            max-width: 244px;
             border-radius: 18px;
             background: #f6f7f2;
             border-width: 1px;
@@ -658,7 +666,9 @@ export component AppWindow inherits Window {
                     }
 
                     ComboBox {
-                        width: 170px;
+                        min-width: 118px;
+                        max-width: 170px;
+                        horizontal-stretch: 1;
                         model: root.sort-options;
                         current-index <=> root.current-sort-index;
                         changed current-index => {
@@ -690,57 +700,32 @@ export component AppWindow inherits Window {
                     background: #f0f4f6;
                     border-width: 1px;
                     border-color: #dde5e9;
-                    height: 44px;
+                    min-height: 44px;
 
                     HorizontalBox {
                         padding-left: 10px;
                         padding-right: 10px;
                         padding-top: 6px;
                         padding-bottom: 6px;
-                        spacing: 8px;
+                        spacing: 6px;
 
                         VerticalBox {
+                            min-width: 120px;
+                            horizontal-stretch: 1;
                             spacing: 1px;
 
                             Text {
                                 text: root.selection-text;
                                 color: #3a5161;
                                 wrap: word-wrap;
+                                overflow: elide;
                             }
 
                             Text {
                                 text: root.clipboard-text;
                                 color: #6d7c88;
                                 wrap: word-wrap;
-                            }
-                        }
-
-                        Rectangle {
-                            horizontal-stretch: 1;
-                            background: transparent;
-                        }
-
-                        ToolbarButton {
-                            enabled: root.can-open-selection;
-                            text: "Open";
-                            clicked => {
-                                root.open-selected();
-                            }
-                        }
-
-                        ToolbarButton {
-                            enabled: root.can-transfer-selection;
-                            text: "Copy";
-                            clicked => {
-                                root.request-copy();
-                            }
-                        }
-
-                        ToolbarButton {
-                            enabled: root.can-transfer-selection;
-                            text: "Cut";
-                            clicked => {
-                                root.request-cut();
+                                overflow: elide;
                             }
                         }
 
@@ -772,7 +757,37 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        ToolbarButton {
+                        Rectangle {
+                            width: 1px;
+                            height: 20px;
+                            background: #cfd9e1;
+                        }
+
+                        SecondaryActionButton {
+                            enabled: root.can-open-selection;
+                            text: "Open";
+                            clicked => {
+                                root.open-selected();
+                            }
+                        }
+
+                        SecondaryActionButton {
+                            enabled: root.can-transfer-selection;
+                            text: "Copy";
+                            clicked => {
+                                root.request-copy();
+                            }
+                        }
+
+                        SecondaryActionButton {
+                            enabled: root.can-transfer-selection;
+                            text: "Cut";
+                            clicked => {
+                                root.request-cut();
+                            }
+                        }
+
+                        SecondaryActionButton {
                             enabled: root.can-rename-selection;
                             text: "Rename";
                             clicked => {
@@ -780,7 +795,7 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        ToolbarButton {
+                        SecondaryActionButton {
                             enabled: root.can-delete-selection;
                             text: "Delete";
                             clicked => {
