@@ -115,6 +115,16 @@ Files Rusted/
 2. `cargo test` 已成功通过。
 3. `cargo build` 已成功通过。
 4. 程序已在 `xvfb-run` 提供的虚拟显示环境中成功启动，并持续运行到外部 `timeout` 结束；当前环境会打印一条 `xdg color schemes` 监听警告，但不影响启动。
+5. 已在 Windows 人工诊断确认一个 Slint 平台细节：文件列表中的中文文件名如果使用单行 `Text` 且开启 `overflow: elide`，可能会整段不显示；状态栏中文、固定中文文本、固定宽度绑定文本都可正常显示。这不是 Rust 数据链路问题，而是 Windows 下 `overflow: elide` 的中文渲染路径问题。
+
+## Windows / Slint 已知坑
+
+1. 文件列表名称列如果要显示中文文件名，**不要默认依赖 `overflow: elide`**。
+2. 当前项目已确认：在 Windows 下，`wrap: no-wrap` + `overflow: elide` 会导致中文文件名整段空白，连后缀也不显示。
+3. 更稳的策略是：
+   - 由外层容器负责 `clip`
+   - 文件名 `Text` 保持单行，但不使用 `overflow: elide`
+4. 如果以后再次出现“状态栏中文正常，但列表中文文件名整段空白”，优先排查这里，而不是先怀疑 `SharedString`、编码或后台加载。
 
 ## 建议下一步
 

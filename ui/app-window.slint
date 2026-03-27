@@ -141,10 +141,12 @@ component FileRow inherits Rectangle {
         Rectangle {
             horizontal-stretch: 1;
             min-width: 0px;
-            background: transparent;
             clip: true;
+            background: transparent;
 
             HorizontalBox {
+                width: parent.width;
+                height: parent.height;
                 spacing: 8px;
 
                 Text {
@@ -157,12 +159,12 @@ component FileRow inherits Rectangle {
                 }
 
                 Text {
+                    min-width: 0px;
                     text: entry.name;
                     horizontal-stretch: 1;
                     color: #1f2937;
                     font-size: 13px;
                     wrap: no-wrap;
-                    overflow: elide;
                     vertical-alignment: center;
                 }
             }
