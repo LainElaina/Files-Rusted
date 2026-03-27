@@ -3,3 +3,6 @@
 /.vscode
 /.worktrees
 Cargo.lock
+/docs
+下次直接看这里.md
+开发交接说明.md

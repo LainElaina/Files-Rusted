@@ -1,4 +1,4 @@
-import { Button, ComboBox, HorizontalBox, LineEdit, ListView, VerticalBox } from "std-widgets.slint";
+import { Button, HorizontalBox, LineEdit, ListView, VerticalBox } from "std-widgets.slint";
 
 export struct SidebarEntry {
     label: string,
@@ -18,19 +18,14 @@ export struct BreadcrumbEntry {
     label: string,
 }
 
-component ToolbarButton inherits Button {
+component NavButton inherits Button {
+    min-width: 30px;
+    min-height: 28px;
+}
+
+component InlineButton inherits Button {
     min-width: 46px;
     min-height: 26px;
-}
-
-component NavButton inherits Button {
-    min-width: 28px;
-    min-height: 26px;
-}
-
-component SecondaryActionButton inherits Button {
-    min-width: 38px;
-    min-height: 24px;
 }
 
 component BreadcrumbChip inherits Rectangle {
@@ -38,41 +33,42 @@ component BreadcrumbChip inherits Rectangle {
     callback activated;
 
     height: 22px;
-    max-width: 180px;
     min-width: 0px;
-    clip: true;
+    max-width: 180px;
     border-radius: 4px;
     border-width: 0px;
-    background: breadcrumb-touch.pressed ? #dbe7f2 : (breadcrumb-touch.has-hover ? #edf3f8 : transparent);
+    clip: true;
+    background: crumb-touch.pressed ? #dfe8f3 : (crumb-touch.has-hover ? #eef3f8 : transparent);
 
     Text {
         text: label;
         x: 6px;
         y: 3px;
         width: parent.width - 12px;
-        color: #2d4356;
+        color: #334155;
         font-size: 12px;
         font-weight: 500;
         wrap: no-wrap;
         overflow: elide;
+        vertical-alignment: center;
     }
 
-    breadcrumb-touch := TouchArea {
+    crumb-touch := TouchArea {
         clicked => {
             root.activated();
         }
     }
 }
 
-component SidebarCard inherits Rectangle {
+component SidebarRow inherits Rectangle {
     in property<SidebarEntry> entry;
     in property<bool> selected: false;
     callback activated;
 
     height: 32px;
-    border-radius: 6px;
+    border-radius: 7px;
     border-width: 0px;
-    background: selected ? #e9eff5 : (sidebar-touch.has-hover ? #f1f5f8 : transparent);
+    background: selected ? #e8f0fe : (sidebar-touch.has-hover ? #f4f7fb : transparent);
 
     HorizontalBox {
         padding-left: 0px;
@@ -82,24 +78,29 @@ component SidebarCard inherits Rectangle {
         spacing: 8px;
 
         Rectangle {
-            width: 2px;
-            border-radius: 2px;
-            background: selected ? #5f8fb2 : transparent;
+            width: 3px;
+            border-radius: 99px;
+            background: selected ? #2563eb : transparent;
+        }
+
+        Text {
+            width: 16px;
+            text: selected ? "▣" : "▢";
+            color: selected ? #2563eb : #94a3b8;
+            font-size: 10px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
         }
 
         Text {
             text: entry.label;
+            horizontal-stretch: 1;
+            color: selected ? #1e3a5f : #334155;
             font-size: 13px;
             font-weight: selected ? 600 : 500;
-            color: selected ? #21384b : #3f5568;
-            vertical-alignment: center;
             wrap: no-wrap;
             overflow: elide;
-        }
-
-        Rectangle {
-            horizontal-stretch: 1;
-            background: transparent;
+            vertical-alignment: center;
         }
     }
 
@@ -110,10 +111,10 @@ component SidebarCard inherits Rectangle {
     }
 }
 
-component FileCard inherits Rectangle {
+component FileRow inherits Rectangle {
     in property<FileEntry> entry;
-    in property<length> type-column-width: 64px;
-    in property<length> size-column-width: 58px;
+    in property<length> type-column-width: 112px;
+    in property<length> size-column-width: 92px;
     callback activated(bool, bool);
     callback open-requested;
     callback copy-requested;
@@ -121,66 +122,84 @@ component FileCard inherits Rectangle {
     callback rename-requested;
     callback delete-requested;
 
-    height: 32px;
-    border-radius: 6px;
-    border-width: 1px;
-    border-color: entry.focused ? #8fb2cb : (entry.selected ? #bfd6e6 : #dfe5ea);
-    background: entry.selected ? #e9f2f8 : (entry.focused ? #f4f8fb : #ffffff);
+    height: 31px;
+    border-width: 0px;
+    background: entry.selected ? #e8f0fe : (row-touch.has-hover ? #f7f9fc : transparent);
 
     HorizontalBox {
         padding-left: 8px;
-        padding-right: 10px;
-        padding-top: 5px;
-        padding-bottom: 5px;
-        spacing: 8px;
+        padding-right: 12px;
+        padding-top: 0px;
+        padding-bottom: 0px;
+        spacing: 10px;
 
-        Text {
-            width: 16px;
-            text: entry.kind == "Folder" ? "🗀" : "🗋";
-            color: entry.kind == "Folder" ? #4d6a80 : #6f7f8d;
-            font-size: 13px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-
-        Text {
-            text: entry.name;
-            font-size: 13px;
-            color: #1f2d39;
-            vertical-alignment: center;
-            wrap: no-wrap;
-            overflow: elide;
+        Rectangle {
+            width: 24px;
+            background: transparent;
         }
 
         Rectangle {
             horizontal-stretch: 1;
+            min-width: 0px;
             background: transparent;
+            clip: true;
+
+            HorizontalBox {
+                spacing: 8px;
+
+                Text {
+                    width: 16px;
+                    text: entry.kind == "Folder" ? "📁" : "📄";
+                    color: entry.kind == "Folder" ? #4b6b8a : #64748b;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: entry.name;
+                    horizontal-stretch: 1;
+                    color: #1f2937;
+                    font-size: 13px;
+                    wrap: no-wrap;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
         }
 
         Text {
             text: entry.kind;
             width: root.type-column-width;
+            color: #6b7280;
             font-size: 12px;
-            color: #5f6e7a;
-            horizontal-alignment: right;
-            vertical-alignment: center;
             wrap: no-wrap;
             overflow: elide;
+            horizontal-alignment: left;
+            vertical-alignment: center;
         }
 
         Text {
             text: entry.size;
             width: root.size-column-width;
+            color: #6b7280;
             font-size: 12px;
-            color: #5f6e7a;
-            horizontal-alignment: right;
-            vertical-alignment: center;
             wrap: no-wrap;
             overflow: elide;
+            horizontal-alignment: right;
+            vertical-alignment: center;
         }
     }
 
-    TouchArea {
+    Rectangle {
+        x: 12px;
+        y: parent.height - 1px;
+        width: parent.width - 12px;
+        height: 1px;
+        background: #edf1f6;
+    }
+
+    row-touch := TouchArea {
         double-clicked => {
             root.open-requested();
         }
@@ -244,7 +263,7 @@ export component AppWindow inherits Window {
     width: 1360px;
     height: 860px;
     title: "Files Rusted";
-    background: #ece8dc;
+    background: #eef1f5;
 
     in-out property<string> current-path: "/";
     in-out property<string> status-text: "Ready";
@@ -276,8 +295,8 @@ export component AppWindow inherits Window {
     in-out property<[FileEntry]> file-items;
     in-out property<[BreadcrumbEntry]> breadcrumb-items;
     in-out property<[string]> sort-options;
-    in property<length> type-column-width: 64px;
-    in property<length> size-column-width: 58px;
+    in property<length> type-column-width: 112px;
+    in property<length> size-column-width: 92px;
 
     callback create-file();
     callback request-copy();
@@ -399,86 +418,68 @@ export component AppWindow inherits Window {
         x: 0;
         y: 0;
         width: parent.width;
-        min-height: 36px;
-        background: #f3f5f7;
+        height: 42px;
+        background: #fafafa;
         border-width: 0px;
 
-        VerticalBox {
-            padding-left: 8px;
-            padding-right: 8px;
-            padding-top: 4px;
-            padding-bottom: 4px;
-            spacing: 2px;
+        HorizontalBox {
+            padding-left: 10px;
+            padding-right: 10px;
+            padding-top: 7px;
+            padding-bottom: 7px;
+            spacing: 6px;
 
-            HorizontalBox {
-                spacing: 6px;
-
-                NavButton {
-                    enabled: root.can-navigate-back;
-                    text: "←";
-                    clicked => {
-                        root.navigate-back();
-                    }
+            NavButton {
+                enabled: root.can-navigate-back;
+                text: "←";
+                clicked => {
+                    root.navigate-back();
                 }
+            }
 
-                NavButton {
-                    enabled: root.can-navigate-forward;
-                    text: "→";
-                    clicked => {
-                        root.navigate-forward();
-                    }
+            NavButton {
+                enabled: root.can-navigate-forward;
+                text: "→";
+                clicked => {
+                    root.navigate-forward();
                 }
+            }
 
-                NavButton {
-                    text: "⌂";
-                    clicked => {
-                        root.navigate-home();
-                    }
+            NavButton {
+                text: "⌂";
+                clicked => {
+                    root.navigate-home();
                 }
+            }
 
-                NavButton {
-                    text: "↑";
-                    clicked => {
-                        root.navigate-up();
-                    }
+            NavButton {
+                text: "↑";
+                clicked => {
+                    root.navigate-up();
                 }
+            }
 
-                NavButton {
-                    text: "⟳";
-                    clicked => {
-                        root.refresh-directory();
-                    }
-                }
-
-                Rectangle {
-                    horizontal-stretch: 1;
-                    background: transparent;
-                }
-
-                LineEdit {
-                    min-width: 92px;
-                    max-width: 180px;
-                    horizontal-stretch: 1;
-                    text <=> root.filter-text;
-                    placeholder-text: "Filter";
-                    edited(value) => {
-                        root.filter-updated(value);
-                    }
+            NavButton {
+                text: "⟳";
+                clicked => {
+                    root.refresh-directory();
                 }
             }
 
             Rectangle {
-                min-width: 72px;
                 horizontal-stretch: 1;
+                min-width: 120px;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: #d5dbe4;
+                background: #ffffff;
                 clip: true;
-                border-width: 0px;
-                background: transparent;
 
                 HorizontalBox {
-                    padding-left: 2px;
-                    padding-right: 2px;
-                    padding-top: 1px;
-                    padding-bottom: 1px;
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    padding-top: 3px;
+                    padding-bottom: 3px;
                     spacing: 2px;
 
                     for crumb[i] in root.breadcrumb-items : HorizontalBox {
@@ -487,7 +488,8 @@ export component AppWindow inherits Window {
 
                         if i > 0 : Text {
                             text: ">";
-                            color: #8a98a3;
+                            color: #9aa4b2;
+                            font-size: 12px;
                             vertical-alignment: center;
                         }
 
@@ -500,23 +502,92 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+
+            LineEdit {
+                min-width: 220px;
+                max-width: 260px;
+                text <=> root.filter-text;
+                placeholder-text: "Search current folder";
+                edited(value) => {
+                    root.filter-updated(value);
+                }
+            }
+        }
+
+        Rectangle {
+            y: parent.height - 1px;
+            width: parent.width;
+            height: 1px;
+            background: #e5e7eb;
+        }
+    }
+
+    rename-strip := Rectangle {
+        x: 0;
+        y: top-toolbar.height;
+        width: parent.width;
+        height: root.rename-mode ? 42px : 0px;
+        clip: true;
+        background: #fff8df;
+        border-width: 0px;
+
+        if root.rename-mode : HorizontalBox {
+            padding-left: 10px;
+            padding-right: 10px;
+            padding-top: 7px;
+            padding-bottom: 7px;
+            spacing: 8px;
+
+            Text {
+                text: "Rename";
+                color: #6b4f12;
+                font-size: 12px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+
+            LineEdit {
+                text <=> root.rename-draft;
+                placeholder-text: "New name";
+                edited(value) => {
+                    root.rename-draft-updated(value);
+                }
+            }
+
+            InlineButton {
+                text: "Apply";
+                clicked => {
+                    root.commit-rename();
+                }
+            }
+
+            InlineButton {
+                text: "Cancel";
+                clicked => {
+                    root.cancel-rename();
+                }
+            }
+        }
+
+        if root.rename-mode : Rectangle {
+            y: parent.height - 1px;
+            width: parent.width;
+            height: 1px;
+            background: #ead9a6;
         }
     }
 
     HorizontalBox {
-        x: 10px;
-        y: top-toolbar.height + 6px;
-        width: parent.width - 20px;
-        height: parent.height - top-toolbar.height - 32px;
-        spacing: 8px;
+        x: 0;
+        y: top-toolbar.height + rename-strip.height;
+        width: parent.width;
+        height: parent.height - top-toolbar.height - rename-strip.height - 22px;
+        spacing: 0px;
 
         Rectangle {
-            min-width: 176px;
-            max-width: 208px;
-            border-radius: 8px;
-            background: #f5f7f8;
-            border-width: 1px;
-            border-color: #dde4e9;
+            width: 210px;
+            background: #fcfcfd;
+            border-width: 0px;
 
             VerticalBox {
                 padding-left: 8px;
@@ -526,14 +597,14 @@ export component AppWindow inherits Window {
                 spacing: 4px;
 
                 Text {
-                    text: "Locations";
+                    text: "Navigation";
                     font-size: 12px;
+                    color: #6b7280;
                     font-weight: 600;
-                    color: #6d7d89;
                 }
 
                 ListView {
-                    for destination[i] in root.sidebar-items : SidebarCard {
+                    for destination[i] in root.sidebar-items : SidebarRow {
                         width: parent.width;
                         entry: destination;
                         selected: root.active-sidebar-index == i;
@@ -543,14 +614,19 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                height: parent.height;
+                background: #e5e7eb;
+            }
         }
 
         Rectangle {
             horizontal-stretch: 1;
-            border-radius: 8px;
-            background: #f8fafb;
-            border-width: 1px;
-            border-color: #dde4e9;
+            background: #ffffff;
+            border-width: 0px;
 
             TouchArea {
                 pointer-event(event) => {
@@ -646,209 +722,89 @@ export component AppWindow inherits Window {
             }
 
             VerticalBox {
-                padding-left: 8px;
-                padding-right: 8px;
-                padding-top: 8px;
-                padding-bottom: 6px;
-                spacing: 6px;
-
-                HorizontalBox {
-                    spacing: 6px;
-
-                    ComboBox {
-                        min-width: 118px;
-                        max-width: 170px;
-                        horizontal-stretch: 1;
-                        model: root.sort-options;
-                        current-index <=> root.current-sort-index;
-                        changed current-index => {
-                            root.sort-mode-selected(self.current-index);
-                        }
-                    }
-
-                    Rectangle {
-                        horizontal-stretch: 1;
-                        background: transparent;
-                    }
-
-                    ToolbarButton {
-                        enabled: root.can-paste;
-                        text: "Paste";
-                        clicked => {
-                            root.paste-into-current-directory();
-                        }
-                    }
-
-                    ToolbarButton {
-                        text: "New File";
-                        clicked => {
-                            root.create-file();
-                        }
-                    }
-
-                    ToolbarButton {
-                        text: "New Folder";
-                        clicked => {
-                            root.create-folder();
-                        }
-                    }
-
-                    SecondaryActionButton {
-                        enabled: root.can-open-selection;
-                        text: "Open";
-                        clicked => {
-                            root.open-selected();
-                        }
-                    }
-
-                    SecondaryActionButton {
-                        enabled: root.can-transfer-selection;
-                        text: "Copy";
-                        clicked => {
-                            root.request-copy();
-                        }
-                    }
-
-                    SecondaryActionButton {
-                        enabled: root.can-transfer-selection;
-                        text: "Cut";
-                        clicked => {
-                            root.request-cut();
-                        }
-                    }
-
-                    SecondaryActionButton {
-                        enabled: root.can-rename-selection;
-                        text: "Rename";
-                        clicked => {
-                            root.request-rename();
-                        }
-                    }
-
-                    SecondaryActionButton {
-                        enabled: root.can-delete-selection;
-                        text: "Delete";
-                        clicked => {
-                            root.delete-selected();
-                        }
-                    }
-                }
-
-                if root.rename-mode : Rectangle {
-                    border-radius: 12px;
-                    background: #fff7df;
-                    border-width: 1px;
-                    border-color: #ead39a;
-                    min-height: 48px;
-
-                    HorizontalBox {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        padding-top: 6px;
-                        padding-bottom: 6px;
-                        spacing: 8px;
-
-                        Text {
-                            text: "Rename to";
-                            color: #5b4a17;
-                            font-weight: 700;
-                            vertical-alignment: center;
-                        }
-
-                        LineEdit {
-                            text <=> root.rename-draft;
-                            placeholder-text: "New name";
-                            edited(value) => {
-                                root.rename-draft-updated(value);
-                            }
-                        }
-
-                        ToolbarButton {
-                            text: "Apply";
-                            clicked => {
-                                root.commit-rename();
-                            }
-                        }
-
-                        ToolbarButton {
-                            text: "Cancel";
-                            clicked => {
-                                root.cancel-rename();
-                            }
-                        }
-                    }
-                }
+                padding-left: 0px;
+                padding-right: 0px;
+                padding-top: 0px;
+                padding-bottom: 0px;
+                spacing: 0px;
 
                 Rectangle {
-                    border-radius: 6px;
-                    background: #f4f7f9;
-                    border-width: 1px;
-                    border-color: #e0e7ec;
-                    height: 30px;
+                    height: 32px;
+                    background: #fafafa;
+                    border-width: 0px;
 
                     HorizontalBox {
                         padding-left: 8px;
-                        padding-right: 8px;
-                        padding-top: 4px;
-                        padding-bottom: 4px;
-                        spacing: 8px;
+                        padding-right: 12px;
+                        padding-top: 0px;
+                        padding-bottom: 0px;
+                        spacing: 10px;
+
+                        Rectangle {
+                            width: 24px;
+                            background: transparent;
+                        }
 
                         Text {
                             text: "Name";
-                            font-size: 13px;
-                            font-weight: 600;
-                            color: #5a6a76;
-                        }
-
-                        Rectangle {
                             horizontal-stretch: 1;
-                            background: transparent;
+                            color: #6b7280;
+                            font-size: 12px;
+                            font-weight: 600;
+                            vertical-alignment: center;
                         }
 
                         Text {
                             text: "Type";
                             width: root.type-column-width;
-                            font-size: 13px;
+                            color: #6b7280;
+                            font-size: 12px;
                             font-weight: 600;
-                            color: #5a6a76;
-                            horizontal-alignment: right;
+                            vertical-alignment: center;
                         }
 
                         Text {
                             text: "Size";
                             width: root.size-column-width;
-                            font-size: 13px;
+                            color: #6b7280;
+                            font-size: 12px;
                             font-weight: 600;
-                            color: #5a6a76;
                             horizontal-alignment: right;
+                            vertical-alignment: center;
                         }
+                    }
+
+                    Rectangle {
+                        y: parent.height - 1px;
+                        width: parent.width;
+                        height: 1px;
+                        background: #e5e7eb;
                     }
                 }
 
                 if root.item-count == 0 : Rectangle {
-                    border-radius: 16px;
-                    background: #f0f3ef;
-                    border-width: 1px;
-                    border-color: #dde2db;
                     vertical-stretch: 1;
+                    background: #ffffff;
+                    border-width: 0px;
 
                     VerticalBox {
                         alignment: center;
-                        spacing: 12px;
+                        spacing: 8px;
 
                         Text {
-                            text: root.total-item-count == 0 ? "This directory is empty" : "No items match the current filter";
-                            font-size: 22px;
+                            text: root.total-item-count == 0 ? "This folder is empty" : "No items match the current search";
+                            color: #1f2937;
+                            font-size: 18px;
                             font-weight: 700;
-                            color: #1f2d39;
                             horizontal-alignment: center;
                         }
 
                         Text {
-                            text: root.total-item-count == 0 ? "Create a file or folder to get started." : "Adjust the filter or sort mode to view matching items.";
-                            color: #64717c;
-                            wrap: word-wrap;
+                            text: root.total-item-count == 0 ? "Use the context menu or shortcuts to create items." : "Adjust the search text to see more items.";
+                            color: #6b7280;
+                            font-size: 13px;
                             horizontal-alignment: center;
+                            wrap: word-wrap;
                         }
                     }
                 }
@@ -856,7 +812,7 @@ export component AppWindow inherits Window {
                 if root.item-count > 0 : Rectangle {
                     clip: true;
                     vertical-stretch: 1;
-                    background: transparent;
+                    background: #ffffff;
 
                     Timer {
                         interval: 16ms;
@@ -918,7 +874,7 @@ export component AppWindow inherits Window {
                             );
                         }
 
-                        for entry[i] in root.file-items : FileCard {
+                        for entry[i] in root.file-items : FileRow {
                             width: parent.width;
                             entry: entry;
                             type-column-width: root.type-column-width;
@@ -963,24 +919,29 @@ export component AppWindow inherits Window {
                         y: root.drag-selection-y * 1px;
                         width: root.drag-selection-width * 1px;
                         height: root.drag-selection-height * 1px;
-                        border-radius: 8px;
+                        border-radius: 4px;
                         border-width: 1px;
                         border-color: #4c7ea1;
-                        background: #84a8c244;
+                        background: #84a8c233;
                     }
                 }
             }
         }
     }
 
-    Rectangle {
+    status-bar := Rectangle {
         x: 0;
         y: parent.height - 22px;
         width: parent.width;
         height: 22px;
-        background: #f1f4f6;
-        border-width: 1px;
-        border-color: #dbe3e9;
+        background: #fafafa;
+        border-width: 0px;
+
+        Rectangle {
+            width: parent.width;
+            height: 1px;
+            background: #e5e7eb;
+        }
 
         HorizontalBox {
             padding-left: 10px;
@@ -990,47 +951,29 @@ export component AppWindow inherits Window {
             spacing: 10px;
 
             Text {
-                text: root.item-count + " visible / " + root.total-item-count + " total";
+                text: root.item-count + " items";
+                color: #6b7280;
                 font-size: 11px;
-                color: #5a6b78;
                 wrap: no-wrap;
                 overflow: elide;
-            }
-
-            Rectangle {
-                width: 1px;
-                background: #d8e0e6;
             }
 
             Text {
                 text: root.selection-text;
-                font-size: 11px;
-                color: #4c5e6c;
-                wrap: no-wrap;
-                overflow: elide;
-            }
-
-            Rectangle {
-                width: 1px;
-                background: #d8e0e6;
-            }
-
-            Text {
-                text: root.clipboard-text;
                 horizontal-stretch: 1;
+                color: #6b7280;
                 font-size: 11px;
-                color: #60727f;
                 wrap: no-wrap;
                 overflow: elide;
             }
 
             Text {
                 text: root.status-text;
-                horizontal-alignment: right;
+                color: #64748b;
                 font-size: 11px;
-                color: #587080;
                 wrap: no-wrap;
                 overflow: elide;
+                horizontal-alignment: right;
             }
         }
     }
