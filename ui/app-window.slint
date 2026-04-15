@@ -345,6 +345,7 @@ export component AppWindow inherits Window {
     callback sort-mode-selected(int);
     callback filter-updated(string);
     callback process-directory-load-results();
+    callback escape-pressed();
 
     changed item-count => {
         root.clear-visible-item-layouts();
@@ -396,7 +397,7 @@ export component AppWindow inherits Window {
                 root.delete-selected();
                 accept
             } else if (event.text == Key.Escape) {
-                root.clear-selection();
+                root.escape-pressed();
                 accept
             } else if (event.text == Key.F2) {
                 root.request-rename();

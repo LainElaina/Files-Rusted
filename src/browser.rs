@@ -830,6 +830,11 @@ impl BrowserState {
         self.apply_view(window, file_model);
     }
 
+    pub fn handle_escape(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        self.handle_escape_command();
+        self.apply_view(window, file_model);
+    }
+
     pub fn toggle_focused_selection(
         &self,
         extend: bool,
@@ -1370,6 +1375,18 @@ impl BrowserState {
     fn cancel_rename_internal(&self) {
         *self.rename_mode.borrow_mut() = false;
         self.rename_draft.borrow_mut().clear();
+    }
+
+    fn handle_escape_command(&self) {
+        if *self.rename_mode.borrow() {
+            self.cancel_rename_internal();
+            self.clear_status_override();
+            return;
+        }
+
+        self.clear_status_override();
+        self.cancel_rename_internal();
+        self.selection_state.borrow_mut().clear_selection();
     }
 
     fn clipboard_text(&self) -> String {
@@ -2381,6 +2398,39 @@ mod tests {
         assert_eq!(
             view.status_text.as_str(),
             "beta.txt is hidden by the current filter"
+        );
+    }
+
+    #[test]
+    fn browser_state_escape_during_rename_preserves_selection() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        state
+            .loaded_entries
+            .borrow_mut()
+            .push(directory_entry("/workspace/alpha.txt", false, 10));
+        state
+            .selection_state
+            .borrow_mut()
+            .set_single_selection(Some(PathBuf::from("/workspace/alpha.txt")));
+        *state.rename_mode.borrow_mut() = true;
+        *state.rename_draft.borrow_mut() = "renaming".to_string();
+
+        state.handle_escape_command();
+
+        assert!(!*state.rename_mode.borrow());
+        assert_eq!(state.rename_draft.borrow().as_str(), "");
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
+            Some(PathBuf::from("/workspace/alpha.txt"))
+        );
+        assert_eq!(
+            state.selection_state.borrow().selected_paths(),
+            [PathBuf::from("/workspace/alpha.txt")]
         );
     }
 

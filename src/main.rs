@@ -475,6 +475,17 @@ fn main() -> Result<(), slint::PlatformError> {
         let window_weak = window.as_weak();
         let state = state.clone();
         let file_model = file_model.clone();
+        window.on_escape_pressed(move || {
+            if let Some(window) = window_weak.upgrade() {
+                state.handle_escape(&window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
         window.on_sort_mode_selected(move |index| {
             if let Some(window) = window_weak.upgrade() {
                 state.set_sort_mode(index, &window, file_model.as_ref());
