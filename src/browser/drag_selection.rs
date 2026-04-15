@@ -62,7 +62,8 @@ pub(super) struct DragScrollViewport {
 }
 
 pub(super) fn compute_drag_autoscroll_delta(pointer_y: f32, viewport: DragScrollViewport) -> f32 {
-    if viewport.content_height <= 0.0 || viewport.hot_zone_size <= 0.0 || viewport.max_speed <= 0.0 {
+    if viewport.content_height <= 0.0 || viewport.hot_zone_size <= 0.0 || viewport.max_speed <= 0.0
+    {
         return 0.0;
     }
 

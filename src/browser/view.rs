@@ -34,9 +34,7 @@ pub(super) fn build_browser_view(
     let effective_filter = filter_query.trim().to_lowercase();
     let mut visible_entries = loaded_entries
         .iter()
-        .filter(|entry| {
-            effective_filter.is_empty() || entry.name_lower.contains(&effective_filter)
-        })
+        .filter(|entry| effective_filter.is_empty() || entry.name_lower.contains(&effective_filter))
         .cloned()
         .collect::<Vec<_>>();
     visible_entries.sort_by(|left, right| sort_mode.compare(left, right));
@@ -162,10 +160,7 @@ pub(super) fn build_status_text(
         }
 
         if !primary_visible {
-            return SharedString::from(format!(
-                "{} is hidden by the current filter",
-                entry.name
-            ));
+            return SharedString::from(format!("{} is hidden by the current filter", entry.name));
         }
 
         if entry.is_dir {

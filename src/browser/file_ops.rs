@@ -14,7 +14,11 @@ pub(super) fn item_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-pub(super) fn unique_child_path(parent: &Path, base_name: &str, extension: Option<&str>) -> PathBuf {
+pub(super) fn unique_child_path(
+    parent: &Path,
+    base_name: &str,
+    extension: Option<&str>,
+) -> PathBuf {
     let extension = extension
         .map(str::to_string)
         .filter(|value| !value.is_empty());
@@ -71,7 +75,11 @@ pub(super) fn move_path(source: &Path, destination: &Path) -> std::io::Result<()
     }
 }
 
-pub(super) fn destination_for_transfer(kind: TransferKind, source: &Path, target_dir: &Path) -> PathBuf {
+pub(super) fn destination_for_transfer(
+    kind: TransferKind,
+    source: &Path,
+    target_dir: &Path,
+) -> PathBuf {
     let source_name = item_name(source);
     let original_target = target_dir.join(&source_name);
 

@@ -20,7 +20,12 @@ impl SelectionState {
         self.selection_anchor_path.as_ref()
     }
 
-    pub(super) fn select_range_to(&mut self, visible: &[PathBuf], target: PathBuf, union_existing: bool) {
+    pub(super) fn select_range_to(
+        &mut self,
+        visible: &[PathBuf],
+        target: PathBuf,
+        union_existing: bool,
+    ) {
         let anchor = self
             .selection_anchor_path
             .clone()
@@ -61,11 +66,7 @@ impl SelectionState {
                 self.set_explicit_selection(selection, None, None);
             } else {
                 let fallback = selection[index.min(selection.len() - 1)].clone();
-                self.set_explicit_selection(
-                    selection,
-                    Some(fallback.clone()),
-                    Some(fallback),
-                );
+                self.set_explicit_selection(selection, Some(fallback.clone()), Some(fallback));
             }
         } else {
             selection.push(target.clone());
@@ -146,7 +147,10 @@ pub(super) fn normalize_operation_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 
     let mut normalized = Vec::new();
     for path in unique {
-        if normalized.iter().any(|existing: &PathBuf| path.starts_with(existing)) {
+        if normalized
+            .iter()
+            .any(|existing: &PathBuf| path.starts_with(existing))
+        {
             continue;
         }
 
