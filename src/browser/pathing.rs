@@ -1,7 +1,16 @@
 use super::{DirectoryEntry, SidebarEntry};
 use crate::BreadcrumbEntry;
+use jwalk::WalkDir;
 use slint::SharedString;
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
+#[cfg(test)]
+use std::{
+    fs,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub(super) fn build_sidebar_entries(start_dir: &Path) -> (Vec<SidebarEntry>, Vec<PathBuf>) {
     let mut entries = Vec::new();
@@ -40,8 +49,11 @@ pub(super) fn build_breadcrumbs(current_dir: &Path) -> (Vec<BreadcrumbEntry>, Ve
 }
 
 pub(super) fn load_directory_entries(path: &Path) -> Result<Vec<DirectoryEntry>, std::io::Error> {
-    let entries = fs::read_dir(path)?
+    let entries = WalkDir::new(path)
+        .max_depth(1)
+        .into_iter()
         .filter_map(Result::ok)
+        .filter(|entry| entry.depth() == 1)
         .filter_map(|entry| {
             let path = entry.path();
             let metadata = entry.metadata().ok()?;
@@ -219,10 +231,39 @@ mod tests {
     }
 
     #[test]
+    fn load_directory_entries_reads_only_depth_one_children() {
+        let dir = test_dir("depth-one-jwalk");
+        fs::create_dir_all(dir.join("nested/inner")).unwrap();
+        fs::write(dir.join("root.txt"), "root").unwrap();
+        fs::write(dir.join("nested/child.txt"), "child").unwrap();
+
+        let mut names = load_directory_entries(&dir)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect::<Vec<_>>();
+        names.sort();
+
+        assert_eq!(names, vec!["nested".to_string(), "root.txt".to_string()]);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn short_path_label_truncates_long_paths_to_suffix() {
-        let label = short_path_label(Path::new("/very/long/path/that/keeps/going/for/a/while/project"));
+        let label = short_path_label(Path::new(
+            "/very/long/path/that/keeps/going/for/a/while/project",
+        ));
 
         assert_eq!(label, "…eps/going/for/a/while/project");
         assert_eq!(label.chars().count(), 30);
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("files-rusted-{name}-{unique}"))
     }
 }

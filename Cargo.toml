@@ -6,6 +6,7 @@ build = "build.rs"
 
 [dependencies]
 slint = "1.15.1"
+jwalk = "0.8"
 
 [build-dependencies]
 slint-build = "1.15.1"
