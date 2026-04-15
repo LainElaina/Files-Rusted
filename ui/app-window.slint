@@ -267,6 +267,8 @@ export component AppWindow inherits Window {
     title: "Files Rusted";
     background: #eef1f5;
 
+    in-out property<bool> directory-load-pending: false;
+    in-out property<string> loading-path: "";
     in-out property<string> current-path: "/";
     in-out property<string> status-text: "Ready";
     in-out property<int> item-count: 0;
@@ -342,6 +344,7 @@ export component AppWindow inherits Window {
     callback drag-scroll-applied(float);
     callback sort-mode-selected(int);
     callback filter-updated(string);
+    callback process-directory-load-results();
 
     changed item-count => {
         root.clear-visible-item-layouts();
@@ -509,7 +512,8 @@ export component AppWindow inherits Window {
                 min-width: 220px;
                 max-width: 260px;
                 text <=> root.filter-text;
-                placeholder-text: "Search current folder";
+                placeholder-text: root.directory-load-pending ? "Loading current folder..." : "Search current folder";
+                enabled: !root.directory-load-pending;
                 edited(value) => {
                     root.filter-updated(value);
                 }

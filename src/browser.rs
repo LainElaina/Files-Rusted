@@ -1,13 +1,16 @@
-use slint::{ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::{
     cell::RefCell,
     fs,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::{Arc, Mutex},
 };
 
 use crate::{AppWindow, FileEntry, SidebarEntry};
 
+#[path = "browser/background_loader.rs"]
+mod background_loader;
 #[path = "browser/drag_selection.rs"]
 mod drag_selection;
 #[path = "browser/file_ops.rs"]
@@ -19,6 +22,10 @@ mod selection;
 #[path = "browser/view.rs"]
 mod view;
 
+use background_loader::{
+    classify_result_for_application, spawn_directory_load, DirectoryLoadResult, LoadGeneration,
+    LoadResultAction, SharedLoadResults,
+};
 use drag_selection::{
     compute_drag_autoscroll_delta, DragPoint, DragRect, DragScrollViewport, DragSelectionSession,
     DragSelectionSnapshot, VisibleItemLayout,
@@ -27,9 +34,7 @@ use file_ops::{
     copy_path, destination_for_transfer, format_item_count, item_name, launch_path, move_path,
     unique_child_path,
 };
-use pathing::{
-    build_breadcrumbs, build_sidebar_entries, current_sidebar_index, load_directory_entries,
-};
+use pathing::{build_breadcrumbs, build_sidebar_entries, current_sidebar_index};
 use selection::{normalize_operation_paths, SelectionState};
 
 pub struct BrowserState {
@@ -53,6 +58,10 @@ pub struct BrowserState {
     rename_draft: RefCell<String>,
     pending_transfer: RefCell<Option<TransferOperation>>,
     status_override: RefCell<Option<String>>,
+    next_load_generation: RefCell<u64>,
+    active_load_generation: RefCell<Option<LoadGeneration>>,
+    directory_load_pending: RefCell<bool>,
+    pending_directory_load_results: SharedLoadResults<Vec<DirectoryEntry>>,
 }
 
 impl BrowserState {
@@ -80,6 +89,10 @@ impl BrowserState {
                 rename_draft: RefCell::new(String::new()),
                 pending_transfer: RefCell::new(None),
                 status_override: RefCell::new(None),
+                next_load_generation: RefCell::new(0),
+                active_load_generation: RefCell::new(None),
+                directory_load_pending: RefCell::new(false),
+                pending_directory_load_results: Arc::new(Mutex::new(Vec::new())),
             },
             sidebar_entries,
         )
@@ -96,48 +109,116 @@ impl BrowserState {
         self.sort_mode.borrow().index()
     }
 
-    pub fn refresh(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
-        let current_dir = self.current_dir.borrow().clone();
+    fn begin_directory_load_request(&self, _target: PathBuf) -> LoadGeneration {
+        let mut next = self.next_load_generation.borrow_mut();
+        *next += 1;
+        let generation = LoadGeneration(*next);
+        *self.active_load_generation.borrow_mut() = Some(generation);
+        *self.directory_load_pending.borrow_mut() = true;
+        generation
+    }
 
-        match load_directory_entries(&current_dir) {
-            Ok(entries) => {
-                *self.loaded_entries.borrow_mut() = entries;
-                self.apply_view(window, file_model);
-            }
-            Err(error) => {
-                self.loaded_entries.borrow_mut().clear();
-                self.visible_paths.borrow_mut().clear();
-                self.selection_state.borrow_mut().clear_selection();
-                file_model.set_vec(Vec::new());
+    fn finish_directory_load_request(&self, generation: LoadGeneration, _success: bool) {
+        if self.active_load_generation.borrow().as_ref() == Some(&generation) {
+            *self.directory_load_pending.borrow_mut() = false;
+        }
+    }
 
-                self.update_breadcrumbs(window, &current_dir);
-                window.set_current_path(SharedString::from(current_dir.display().to_string()));
-                window.set_item_count(0);
-                window.set_total_item_count(0);
-                window.set_selected_file_index(-1);
-                window.set_selection_text(SharedString::from("No item selected"));
-                window.set_status_text(SharedString::from(format!(
-                    "Failed to open directory: {}",
-                    error
-                )));
-                window.set_can_open_selection(false);
-                window.set_can_rename_selection(false);
-                window.set_can_delete_selection(false);
-                window.set_can_transfer_selection(false);
-                window.set_can_paste(false);
-                window.set_rename_mode(false);
-                window.set_rename_draft(SharedString::from(""));
-                window.set_clipboard_text(SharedString::from(self.clipboard_text()));
-                window.set_active_sidebar_index(current_sidebar_index(
-                    &self.sidebar_paths,
-                    &current_dir,
-                ));
-                let can_navigate_back = !self.back_history.borrow().is_empty();
-                let can_navigate_forward = !self.forward_history.borrow().is_empty();
-                window.set_can_navigate_back(can_navigate_back);
-                window.set_can_navigate_forward(can_navigate_forward);
+    fn active_load_generation(&self) -> Option<LoadGeneration> {
+        *self.active_load_generation.borrow()
+    }
+
+    fn is_directory_load_pending(&self) -> bool {
+        *self.directory_load_pending.borrow()
+    }
+
+    pub fn request_directory_load(
+        &self,
+        target: PathBuf,
+        window: &AppWindow,
+        file_model: &VecModel<FileEntry>,
+    ) {
+        let generation = self.begin_directory_load_request(target.clone());
+        *self.current_dir.borrow_mut() = target.clone();
+        *self.status_override.borrow_mut() = Some(format!("Loading {}", target.display()));
+        self.apply_view(window, file_model);
+        spawn_directory_load(
+            window.as_weak(),
+            self.pending_directory_load_results.clone(),
+            target,
+            generation,
+        );
+    }
+
+    pub fn process_directory_load_results(
+        &self,
+        window: &AppWindow,
+        file_model: &VecModel<FileEntry>,
+    ) {
+        let drained = {
+            let mut pending = self
+                .pending_directory_load_results
+                .lock()
+                .expect("pending directory load results lock poisoned");
+            pending.drain(..).collect::<Vec<_>>()
+        };
+
+        let mut changed = false;
+        for result in drained {
+            let action = self.apply_directory_load_result_state(result);
+            if matches!(
+                action,
+                LoadResultAction::ApplySuccess | LoadResultAction::ApplyFailure
+            ) {
+                changed = true;
             }
         }
+
+        if changed {
+            self.apply_view(window, file_model);
+        }
+    }
+
+    fn apply_directory_load_result_state(
+        &self,
+        result: DirectoryLoadResult<Vec<DirectoryEntry>>,
+    ) -> LoadResultAction {
+        let Some(current_generation) = self.active_load_generation() else {
+            return LoadResultAction::DropStale;
+        };
+
+        if result.target_path != *self.current_dir.borrow() {
+            return LoadResultAction::DropStale;
+        }
+
+        match classify_result_for_application(current_generation, &result) {
+            LoadResultAction::DropStale => LoadResultAction::DropStale,
+            LoadResultAction::ApplySuccess => {
+                if let Ok(entries) = result.outcome {
+                    *self.loaded_entries.borrow_mut() = entries;
+                    self.clear_status_override();
+                    self.finish_directory_load_request(result.generation, true);
+                    LoadResultAction::ApplySuccess
+                } else {
+                    LoadResultAction::DropStale
+                }
+            }
+            LoadResultAction::ApplyFailure => {
+                if let Err(error) = result.outcome {
+                    *self.status_override.borrow_mut() =
+                        Some(format!("Failed to open directory: {}", error.message));
+                    self.finish_directory_load_request(result.generation, false);
+                    LoadResultAction::ApplyFailure
+                } else {
+                    LoadResultAction::DropStale
+                }
+            }
+        }
+    }
+
+    pub fn refresh(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        let current_dir = self.current_dir.borrow().clone();
+        self.request_directory_load(current_dir, window, file_model);
     }
 
     pub fn navigate_home(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
@@ -219,9 +300,11 @@ impl BrowserState {
         self.cancel_rename_internal();
 
         if shift {
-            self.selection_state
-                .borrow_mut()
-                .select_range_to(&self.visible_paths.borrow(), target.clone(), control);
+            self.selection_state.borrow_mut().select_range_to(
+                &self.visible_paths.borrow(),
+                target.clone(),
+                control,
+            );
         } else if control {
             self.selection_state
                 .borrow_mut()
@@ -239,7 +322,6 @@ impl BrowserState {
         }
     }
 
-
     pub fn open_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         let selected_paths = self.selection_state.borrow().selected_items_for_operation();
         if selected_paths.is_empty() {
@@ -254,9 +336,8 @@ impl BrowserState {
         }
 
         if selected_paths.iter().any(|path| path.is_dir()) {
-            *self.status_override.borrow_mut() = Some(
-                "Open with multiple selection currently supports files only".to_string(),
-            );
+            *self.status_override.borrow_mut() =
+                Some("Open with multiple selection currently supports files only".to_string());
             self.apply_view(window, file_model);
             return;
         }
@@ -392,8 +473,10 @@ impl BrowserState {
             kind: TransferKind::Copy,
             sources: selected.clone(),
         });
-        *self.status_override.borrow_mut() =
-            Some(format!("Ready to copy {}", format_item_count(selected.len())));
+        *self.status_override.borrow_mut() = Some(format!(
+            "Ready to copy {}",
+            format_item_count(selected.len())
+        ));
         self.apply_view(window, file_model);
     }
 
@@ -410,8 +493,10 @@ impl BrowserState {
             kind: TransferKind::Cut,
             sources: selected.clone(),
         });
-        *self.status_override.borrow_mut() =
-            Some(format!("Ready to move {}", format_item_count(selected.len())));
+        *self.status_override.borrow_mut() = Some(format!(
+            "Ready to move {}",
+            format_item_count(selected.len())
+        ));
         self.apply_view(window, file_model);
     }
 
@@ -472,7 +557,10 @@ impl BrowserState {
             if matches!(transfer.kind, TransferKind::Cut)
                 && source.parent().is_some_and(|parent| parent == current_dir)
             {
-                failures.push(format!("{} is already in this directory", item_name(source)));
+                failures.push(format!(
+                    "{} is already in this directory",
+                    item_name(source)
+                ));
                 continue;
             }
 
@@ -621,23 +709,13 @@ impl BrowserState {
         self.delete_paths(selected, window, file_model);
     }
 
-    pub fn delete_item(
-        &self,
-        index: i32,
-        window: &AppWindow,
-        file_model: &VecModel<FileEntry>,
-    ) {
+    pub fn delete_item(&self, index: i32, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         if let Some(target) = self.path_at_visible_index(index) {
             self.delete_paths(vec![target], window, file_model);
         }
     }
 
-    pub fn set_sort_mode(
-        &self,
-        index: i32,
-        window: &AppWindow,
-        file_model: &VecModel<FileEntry>,
-    ) {
+    pub fn set_sort_mode(&self, index: i32, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         *self.sort_mode.borrow_mut() = SortMode::from_index(index);
         self.apply_view(window, file_model);
     }
@@ -699,11 +777,15 @@ impl BrowserState {
         self.cancel_rename_internal();
 
         if extend {
+            self.selection_state.borrow_mut().select_range_to(
+                &self.visible_paths.borrow(),
+                target.clone(),
+                control,
+            );
+        } else if control {
             self.selection_state
                 .borrow_mut()
-                .select_range_to(&self.visible_paths.borrow(), target.clone(), control);
-        } else if control {
-            self.selection_state.borrow_mut().set_focus_only(Some(target.clone()));
+                .set_focus_only(Some(target.clone()));
         } else {
             self.selection_state
                 .borrow_mut()
@@ -712,8 +794,8 @@ impl BrowserState {
 
         if !control || extend {
             self.selection_state
-            .borrow_mut()
-            .ensure_selection_anchor(Some(target));
+                .borrow_mut()
+                .ensure_selection_anchor(Some(target));
         }
         self.apply_view(window, file_model);
     }
@@ -741,11 +823,7 @@ impl BrowserState {
         self.apply_view(window, file_model);
     }
 
-    pub fn clear_selection_command(
-        &self,
-        window: &AppWindow,
-        file_model: &VecModel<FileEntry>,
-    ) {
+    pub fn clear_selection_command(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         self.clear_status_override();
         self.cancel_rename_internal();
         self.selection_state.borrow_mut().clear_selection();
@@ -759,7 +837,11 @@ impl BrowserState {
         window: &AppWindow,
         file_model: &VecModel<FileEntry>,
     ) {
-        let focused = self.selection_state.borrow().primary_selected_path().cloned();
+        let focused = self
+            .selection_state
+            .borrow()
+            .primary_selected_path()
+            .cloned();
         let Some(target) = focused else {
             return;
         };
@@ -768,9 +850,11 @@ impl BrowserState {
         self.cancel_rename_internal();
 
         if extend {
-            self.selection_state
-                .borrow_mut()
-                .select_range_to(&self.visible_paths.borrow(), target.clone(), control);
+            self.selection_state.borrow_mut().select_range_to(
+                &self.visible_paths.borrow(),
+                target.clone(),
+                control,
+            );
         } else if control {
             self.selection_state.borrow_mut().toggle_selection(target);
         } else {
@@ -778,8 +862,8 @@ impl BrowserState {
                 .borrow_mut()
                 .set_single_selection(Some(target.clone()));
             self.selection_state
-            .borrow_mut()
-            .ensure_selection_anchor(Some(target));
+                .borrow_mut()
+                .ensure_selection_anchor(Some(target));
         }
 
         self.apply_view(window, file_model);
@@ -792,12 +876,22 @@ impl BrowserState {
         window: &AppWindow,
         file_model: &VecModel<FileEntry>,
     ) {
+        let Some(request_target) = self.prepare_navigation_request(target, mode) else {
+            return;
+        };
+
+        self.request_directory_load(request_target, window, file_model);
+    }
+
+    fn prepare_navigation_request(&self, target: PathBuf, mode: NavigationMode) -> Option<PathBuf> {
         let current = self.current_dir.borrow().clone();
         if current == target {
             if matches!(mode, NavigationMode::History) {
-                self.refresh(window, file_model);
+                self.clear_status_override();
+                self.cancel_rename_internal();
+                return Some(current);
             }
-            return;
+            return None;
         }
 
         if matches!(mode, NavigationMode::PushCurrent) {
@@ -808,8 +902,8 @@ impl BrowserState {
         self.clear_status_override();
         self.cancel_rename_internal();
         self.selection_state.borrow_mut().clear_selection();
-        *self.current_dir.borrow_mut() = target;
-        self.refresh(window, file_model);
+        *self.current_dir.borrow_mut() = target.clone();
+        Some(target)
     }
 
     fn derived_view_for_apply(&self) -> view::BrowserViewData {
@@ -850,7 +944,10 @@ impl BrowserState {
         derived
     }
 
-    fn apply_view_to_state_and_model(&self, file_model: &VecModel<FileEntry>) -> view::BrowserViewData {
+    fn apply_view_to_state_and_model(
+        &self,
+        file_model: &VecModel<FileEntry>,
+    ) -> view::BrowserViewData {
         let derived = self.derived_view_for_apply();
         *self.visible_paths.borrow_mut() = derived.visible_paths.clone();
         file_model.set_vec(derived.file_rows.clone());
@@ -876,6 +973,8 @@ impl BrowserState {
         window.set_selected_file_index(derived.focused_index);
         window.set_selection_text(derived.selection_text);
         window.set_status_text(derived.status_text);
+        window.set_directory_load_pending(self.is_directory_load_pending());
+        window.set_loading_path(SharedString::from(current_dir.display().to_string()));
         window.set_clipboard_text(SharedString::from(self.clipboard_text()));
         window.set_can_open_selection(derived.can_open_selection);
         window.set_can_rename_selection(derived.can_rename_selection);
@@ -897,10 +996,7 @@ impl BrowserState {
             window.set_drag_selection_width(0.0);
             window.set_drag_selection_height(0.0);
         }
-        window.set_active_sidebar_index(current_sidebar_index(
-            &self.sidebar_paths,
-            &current_dir,
-        ));
+        window.set_active_sidebar_index(current_sidebar_index(&self.sidebar_paths, &current_dir));
         window.set_filter_text(SharedString::from(filter_query));
         window.set_current_sort_index(sort_mode.index());
         window.set_can_navigate_back(can_navigate_back);
@@ -910,8 +1006,16 @@ impl BrowserState {
     fn drag_snapshot(&self) -> DragSelectionSnapshot {
         DragSelectionSnapshot {
             selected: self.selection_state.borrow().selected_paths().to_vec(),
-            primary: self.selection_state.borrow().primary_selected_path().cloned(),
-            anchor: self.selection_state.borrow().selection_anchor_path().cloned(),
+            primary: self
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
+            anchor: self
+                .selection_state
+                .borrow()
+                .selection_anchor_path()
+                .cloned(),
         }
     }
 
@@ -919,7 +1023,11 @@ impl BrowserState {
         *self.visible_item_layouts.borrow_mut() = layouts;
     }
 
-    pub fn clear_visible_item_layouts(&self, _window: &AppWindow, _file_model: &VecModel<FileEntry>) {
+    pub fn clear_visible_item_layouts(
+        &self,
+        _window: &AppWindow,
+        _file_model: &VecModel<FileEntry>,
+    ) {
         self.replace_visible_item_layouts(Vec::new());
     }
 
@@ -975,7 +1083,11 @@ impl BrowserState {
         self.apply_view(window, file_model);
     }
 
-    pub fn finish_drag_selection_from_ui(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+    pub fn finish_drag_selection_from_ui(
+        &self,
+        window: &AppWindow,
+        file_model: &VecModel<FileEntry>,
+    ) {
         self.finish_drag_selection();
         self.apply_view(window, file_model);
     }
@@ -1060,7 +1172,9 @@ impl BrowserState {
                 let requested = compute_drag_autoscroll_delta(pointer.y, viewport);
                 if requested < 0.0 && viewport.scroll_position <= 0.0 {
                     0.0
-                } else if requested > 0.0 && viewport.scroll_position >= viewport.max_scroll_position {
+                } else if requested > 0.0
+                    && viewport.scroll_position >= viewport.max_scroll_position
+                {
                     0.0
                 } else {
                     requested
@@ -1095,9 +1209,11 @@ impl BrowserState {
         } else {
             *self.pending_drag_autoscroll.borrow_mut() = 0.0;
         }
-        self.selection_state
-            .borrow_mut()
-            .set_explicit_selection(result.selected, result.primary, result.anchor);
+        self.selection_state.borrow_mut().set_explicit_selection(
+            result.selected,
+            result.primary,
+            result.anchor,
+        );
     }
 
     fn finish_drag_selection(&self) {
@@ -1144,12 +1260,10 @@ impl BrowserState {
 
         match launch_path(&path) {
             Ok(()) => {
-                *self.status_override.borrow_mut() =
-                    Some(format!("Opening {}", item_name(&path)));
+                *self.status_override.borrow_mut() = Some(format!("Opening {}", item_name(&path)));
             }
             Err(error) => {
-                *self.status_override.borrow_mut() =
-                    Some(format!("Open failed: {}", error));
+                *self.status_override.borrow_mut() = Some(format!("Open failed: {}", error));
             }
         }
 
@@ -1193,7 +1307,11 @@ impl BrowserState {
         *self.status_override.borrow_mut() = Some(if failures == 0 {
             format!("Deleted {}", format_item_count(deleted))
         } else {
-            format!("Deleted {}, {} failed", format_item_count(deleted), failures)
+            format!(
+                "Deleted {}, {} failed",
+                format_item_count(deleted),
+                failures
+            )
         });
         self.refresh(window, file_model);
     }
@@ -1226,11 +1344,15 @@ impl BrowserState {
         self.cancel_rename_internal();
 
         if extend {
+            self.selection_state.borrow_mut().select_range_to(
+                &self.visible_paths.borrow(),
+                target.clone(),
+                control,
+            );
+        } else if control {
             self.selection_state
                 .borrow_mut()
-                .select_range_to(&self.visible_paths.borrow(), target.clone(), control);
-        } else if control {
-            self.selection_state.borrow_mut().set_focus_only(Some(target.clone()));
+                .set_focus_only(Some(target.clone()));
         } else {
             self.selection_state
                 .borrow_mut()
@@ -1239,8 +1361,8 @@ impl BrowserState {
 
         if !control || extend {
             self.selection_state
-            .borrow_mut()
-            .ensure_selection_anchor(Some(target));
+                .borrow_mut()
+                .ensure_selection_anchor(Some(target));
         }
         self.apply_view(window, file_model);
     }
@@ -1253,8 +1375,14 @@ impl BrowserState {
     fn clipboard_text(&self) -> String {
         match self.pending_transfer.borrow().as_ref() {
             Some(transfer) => match transfer.kind {
-                TransferKind::Copy => format!("Clipboard: copy {}", format_item_count(transfer.sources.len())),
-                TransferKind::Cut => format!("Clipboard: move {}", format_item_count(transfer.sources.len())),
+                TransferKind::Copy => format!(
+                    "Clipboard: copy {}",
+                    format_item_count(transfer.sources.len())
+                ),
+                TransferKind::Cut => format!(
+                    "Clipboard: move {}",
+                    format_item_count(transfer.sources.len())
+                ),
             },
             None => "Clipboard: empty".to_string(),
         }
@@ -1324,12 +1452,7 @@ enum SortMode {
 }
 
 impl SortMode {
-    const ALL: [Self; 4] = [
-        Self::NameAsc,
-        Self::NameDesc,
-        Self::SizeAsc,
-        Self::SizeDesc,
-    ];
+    const ALL: [Self; 4] = [Self::NameAsc, Self::NameDesc, Self::SizeAsc, Self::SizeDesc];
 
     fn from_index(index: i32) -> Self {
         match index {
@@ -1408,14 +1531,8 @@ mod tests {
         let mut selection = SelectionState::default();
         selection.set_focus_only(Some(PathBuf::from("/workspace/alpha.txt")));
 
-        let view = view::build_browser_view(
-            &entries,
-            SortMode::NameAsc,
-            "txt",
-            &selection,
-            false,
-            "",
-        );
+        let view =
+            view::build_browser_view(&entries, SortMode::NameAsc, "txt", &selection, false, "");
 
         assert_eq!(
             view.visible_paths,
@@ -1453,14 +1570,8 @@ mod tests {
         let mut selection = SelectionState::default();
         selection.set_single_selection(Some(PathBuf::from("/workspace/zeta.txt")));
 
-        let view = view::build_browser_view(
-            &entries,
-            SortMode::NameAsc,
-            "alp",
-            &selection,
-            false,
-            "",
-        );
+        let view =
+            view::build_browser_view(&entries, SortMode::NameAsc, "alp", &selection, false, "");
 
         assert_eq!(
             view.visible_paths,
@@ -1575,11 +1686,19 @@ mod tests {
             [path("a.txt"), path("b.txt")]
         );
         assert_eq!(
-            state.selection_state.borrow().primary_selected_path().cloned(),
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
             Some(path("b.txt"))
         );
         assert_eq!(
-            state.selection_state.borrow().selection_anchor_path().cloned(),
+            state
+                .selection_state
+                .borrow()
+                .selection_anchor_path()
+                .cloned(),
             Some(path("b.txt"))
         );
         assert!(state.drag_selection_session.borrow().is_none());
@@ -1598,8 +1717,22 @@ mod tests {
         state.finish_drag_selection();
 
         assert!(state.selection_state.borrow().selected_paths().is_empty());
-        assert_eq!(state.selection_state.borrow().primary_selected_path().cloned(), None);
-        assert_eq!(state.selection_state.borrow().selection_anchor_path().cloned(), None);
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
+            None
+        );
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .selection_anchor_path()
+                .cloned(),
+            None
+        );
     }
 
     #[test]
@@ -1631,7 +1764,10 @@ mod tests {
     fn browser_state_ctrl_toggle_removal_from_multi_selection_preserves_selected_anchor() {
         let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
 
-        state.visible_paths.borrow_mut().extend([path("a.txt"), path("b.txt")]);
+        state
+            .visible_paths
+            .borrow_mut()
+            .extend([path("a.txt"), path("b.txt")]);
         state.selection_state.borrow_mut().set_explicit_selection(
             vec![path("a.txt"), path("b.txt")],
             Some(path("b.txt")),
@@ -1640,18 +1776,29 @@ mod tests {
 
         state.activate_file_selection(1, true, false);
 
-        assert_eq!(state.selection_state.borrow().selected_paths(), [path("a.txt")]);
+        assert_eq!(
+            state.selection_state.borrow().selected_paths(),
+            [path("a.txt")]
+        );
         assert!(!state
             .selection_state
             .borrow()
             .selected_paths()
             .contains(&path("b.txt")));
         assert_eq!(
-            state.selection_state.borrow().primary_selected_path().cloned(),
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
             Some(path("a.txt"))
         );
         assert_eq!(
-            state.selection_state.borrow().selection_anchor_path().cloned(),
+            state
+                .selection_state
+                .borrow()
+                .selection_anchor_path()
+                .cloned(),
             Some(path("a.txt"))
         );
     }
@@ -1666,8 +1813,22 @@ mod tests {
         state.activate_file_selection(0, true, false);
 
         assert!(state.selection_state.borrow().selected_paths().is_empty());
-        assert_eq!(state.selection_state.borrow().primary_selected_path().cloned(), None);
-        assert_eq!(state.selection_state.borrow().selection_anchor_path().cloned(), None);
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
+            None
+        );
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .selection_anchor_path()
+                .cloned(),
+            None
+        );
     }
 
     #[test]
@@ -1693,8 +1854,14 @@ mod tests {
         selection.toggle_selection(path("b.txt"));
 
         assert_eq!(selection.selected_paths(), [path("a.txt")]);
-        assert_eq!(selection.primary_selected_path().cloned(), Some(path("a.txt")));
-        assert_eq!(selection.selection_anchor_path().cloned(), Some(path("a.txt")));
+        assert_eq!(
+            selection.primary_selected_path().cloned(),
+            Some(path("a.txt"))
+        );
+        assert_eq!(
+            selection.selection_anchor_path().cloned(),
+            Some(path("a.txt"))
+        );
     }
 
     #[test]
@@ -1892,6 +2059,258 @@ mod tests {
     }
 
     #[test]
+    fn phase_a_background_loader_out_of_order_completion_applies_only_latest_generation() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let file_model = VecModel::from(Vec::<FileEntry>::new());
+
+        let generation_a = state.begin_directory_load_request(PathBuf::from("/workspace/a"));
+        let generation_b = state.begin_directory_load_request(PathBuf::from("/workspace/b"));
+        *state.current_dir.borrow_mut() = PathBuf::from("/workspace/b");
+
+        let latest = DirectoryLoadResult {
+            generation: generation_b,
+            target_path: PathBuf::from("/workspace/b"),
+            outcome: Ok(vec![directory_entry("/workspace/b/new.txt", false, 2)]),
+        };
+        let stale = DirectoryLoadResult {
+            generation: generation_a,
+            target_path: PathBuf::from("/workspace/a"),
+            outcome: Ok(vec![directory_entry("/workspace/a/old.txt", false, 1)]),
+        };
+
+        assert_eq!(
+            state.apply_directory_load_result_state(latest),
+            LoadResultAction::ApplySuccess
+        );
+        let latest_view = state.apply_view_to_state_and_model(&file_model);
+        assert_eq!(latest_view.file_rows.len(), 1);
+        assert_eq!(file_model.row_data(0).unwrap().name.as_str(), "new.txt");
+        assert!(!state.is_directory_load_pending());
+
+        assert_eq!(
+            state.apply_directory_load_result_state(stale),
+            LoadResultAction::DropStale
+        );
+        let after_stale = state.apply_view_to_state_and_model(&file_model);
+        assert_eq!(after_stale.file_rows.len(), 1);
+        assert_eq!(file_model.row_data(0).unwrap().name.as_str(), "new.txt");
+        assert_eq!(state.loaded_entries.borrow()[0].name, "new.txt");
+    }
+
+    #[test]
+    fn browser_state_applies_only_latest_directory_load_result_state() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        let first = state.begin_directory_load_request(PathBuf::from("/workspace/a"));
+        let second = state.begin_directory_load_request(PathBuf::from("/workspace/b"));
+        *state.current_dir.borrow_mut() = PathBuf::from("/workspace/b");
+
+        let stale = DirectoryLoadResult {
+            generation: first,
+            target_path: PathBuf::from("/workspace/a"),
+            outcome: Ok(vec![directory_entry("/workspace/a/old.txt", false, 1)]),
+        };
+        let latest = DirectoryLoadResult {
+            generation: second,
+            target_path: PathBuf::from("/workspace/b"),
+            outcome: Ok(vec![directory_entry("/workspace/b/new.txt", false, 2)]),
+        };
+
+        assert_eq!(
+            state.apply_directory_load_result_state(stale),
+            LoadResultAction::DropStale
+        );
+        assert!(state.loaded_entries.borrow().is_empty());
+        assert!(state.is_directory_load_pending());
+
+        assert_eq!(
+            state.apply_directory_load_result_state(latest),
+            LoadResultAction::ApplySuccess
+        );
+        assert_eq!(state.loaded_entries.borrow().len(), 1);
+        assert_eq!(state.loaded_entries.borrow()[0].name, "new.txt");
+        assert!(!state.is_directory_load_pending());
+    }
+
+    #[test]
+    fn browser_state_keeps_visible_rows_while_directory_load_is_pending() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let file_model = VecModel::from(Vec::<FileEntry>::new());
+
+        state.loaded_entries.borrow_mut().push(directory_entry(
+            "/workspace/existing.txt",
+            false,
+            10,
+        ));
+        let initial = state.apply_view_to_state_and_model(&file_model);
+        assert_eq!(initial.file_rows.len(), 1);
+        assert_eq!(file_model.row_count(), 1);
+
+        state.begin_directory_load_request(PathBuf::from("/workspace/next"));
+        let during_load = state.apply_view_to_state_and_model(&file_model);
+
+        assert!(state.is_directory_load_pending());
+        assert_eq!(during_load.file_rows.len(), 1);
+        assert_eq!(file_model.row_count(), 1);
+        assert_eq!(
+            file_model.row_data(0).unwrap().name.as_str(),
+            "existing.txt"
+        );
+    }
+
+    #[test]
+    fn browser_state_applies_latest_directory_load_atomically() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let file_model = VecModel::from(Vec::<FileEntry>::new());
+
+        state
+            .loaded_entries
+            .borrow_mut()
+            .push(directory_entry("/workspace/old.txt", false, 1));
+        state.apply_view_to_state_and_model(&file_model);
+
+        let generation = state.begin_directory_load_request(PathBuf::from("/workspace/new"));
+        *state.current_dir.borrow_mut() = PathBuf::from("/workspace/new");
+        let result = DirectoryLoadResult {
+            generation,
+            target_path: PathBuf::from("/workspace/new"),
+            outcome: Ok(vec![directory_entry("/workspace/new/fresh.txt", false, 2)]),
+        };
+
+        assert_eq!(
+            state.apply_directory_load_result_state(result),
+            LoadResultAction::ApplySuccess
+        );
+
+        let view = state.apply_view_to_state_and_model(&file_model);
+        assert_eq!(view.visible_count, 1);
+        assert_eq!(file_model.row_count(), 1);
+        assert_eq!(file_model.row_data(0).unwrap().name.as_str(), "fresh.txt");
+        assert_eq!(state.visible_paths.borrow().len(), 1);
+        assert_eq!(
+            state.visible_paths.borrow()[0],
+            PathBuf::from("/workspace/new/fresh.txt")
+        );
+        assert!(!state.is_directory_load_pending());
+    }
+
+    #[test]
+    fn browser_state_refresh_preserves_existing_selection_after_async_reload() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        let file_model = VecModel::from(Vec::<FileEntry>::new());
+
+        state.loaded_entries.borrow_mut().extend([
+            directory_entry("/workspace/alpha.txt", false, 10),
+            directory_entry("/workspace/beta.txt", false, 20),
+        ]);
+        state
+            .selection_state
+            .borrow_mut()
+            .set_single_selection(Some(PathBuf::from("/workspace/alpha.txt")));
+        state.apply_view_to_state_and_model(&file_model);
+
+        let request =
+            state.prepare_navigation_request(PathBuf::from("/workspace"), NavigationMode::History);
+        assert_eq!(request, Some(PathBuf::from("/workspace")));
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
+            Some(PathBuf::from("/workspace/alpha.txt"))
+        );
+
+        let generation = state.begin_directory_load_request(PathBuf::from("/workspace"));
+        let result = DirectoryLoadResult {
+            generation,
+            target_path: PathBuf::from("/workspace"),
+            outcome: Ok(vec![
+                directory_entry("/workspace/alpha.txt", false, 10),
+                directory_entry("/workspace/gamma.txt", false, 30),
+            ]),
+        };
+
+        assert_eq!(
+            state.apply_directory_load_result_state(result),
+            LoadResultAction::ApplySuccess
+        );
+        state.apply_view_to_state_and_model(&file_model);
+
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
+            Some(PathBuf::from("/workspace/alpha.txt"))
+        );
+        assert_eq!(
+            state.selection_state.borrow().selected_paths(),
+            [PathBuf::from("/workspace/alpha.txt")]
+        );
+    }
+
+    #[test]
+    fn browser_state_navigation_to_new_directory_clears_previous_selection_context() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        state
+            .selection_state
+            .borrow_mut()
+            .set_single_selection(Some(PathBuf::from("/workspace/alpha.txt")));
+
+        let request = state.prepare_navigation_request(
+            PathBuf::from("/workspace/next"),
+            NavigationMode::PushCurrent,
+        );
+
+        assert_eq!(request, Some(PathBuf::from("/workspace/next")));
+        assert!(state.selection_state.borrow().selected_paths().is_empty());
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
+            None
+        );
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .selection_anchor_path()
+                .cloned(),
+            None
+        );
+        assert_eq!(
+            state.current_dir.borrow().clone(),
+            PathBuf::from("/workspace/next")
+        );
+    }
+
+    #[test]
+    fn browser_state_loading_state_tracks_latest_generation_only() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        let first = state.begin_directory_load_request(PathBuf::from("/workspace/a"));
+        assert!(state.is_directory_load_pending());
+        assert_eq!(state.active_load_generation(), Some(first));
+
+        let second = state.begin_directory_load_request(PathBuf::from("/workspace/b"));
+        assert!(state.is_directory_load_pending());
+        assert_eq!(state.active_load_generation(), Some(second));
+        assert!(second > first);
+
+        state.finish_directory_load_request(first, true);
+        assert!(state.is_directory_load_pending());
+        assert_eq!(state.active_load_generation(), Some(second));
+
+        state.finish_directory_load_request(second, false);
+        assert!(!state.is_directory_load_pending());
+    }
+
+    #[test]
     fn browser_state_apply_view_reconciles_canonical_selection_state() {
         let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
         let file_model = VecModel::from(Vec::<FileEntry>::new());
@@ -1908,8 +2327,22 @@ mod tests {
         state.apply_view_to_state_and_model(&file_model);
 
         assert!(state.selection_state.borrow().selected_paths().is_empty());
-        assert_eq!(state.selection_state.borrow().primary_selected_path().cloned(), None);
-        assert_eq!(state.selection_state.borrow().selection_anchor_path().cloned(), None);
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
+            None
+        );
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .selection_anchor_path()
+                .cloned(),
+            None
+        );
         assert!(state
             .selection_state
             .borrow()
@@ -1993,11 +2426,19 @@ mod tests {
             [path("a.txt"), path("b.txt")]
         );
         assert_eq!(
-            state.selection_state.borrow().primary_selected_path().cloned(),
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
             Some(path("b.txt"))
         );
         assert_eq!(
-            state.selection_state.borrow().selection_anchor_path().cloned(),
+            state
+                .selection_state
+                .borrow()
+                .selection_anchor_path()
+                .cloned(),
             Some(path("b.txt"))
         );
     }

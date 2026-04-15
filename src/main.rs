@@ -276,9 +276,16 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let state = state.clone();
-        window.on_update_drag_scroll_viewport(move |content_top, content_height, scroll_position, max_scroll_position| {
-            state.set_drag_scroll_viewport_from_ui(content_top, content_height, scroll_position, max_scroll_position);
-        });
+        window.on_update_drag_scroll_viewport(
+            move |content_top, content_height, scroll_position, max_scroll_position| {
+                state.set_drag_scroll_viewport_from_ui(
+                    content_top,
+                    content_height,
+                    scroll_position,
+                    max_scroll_position,
+                );
+            },
+        );
     }
 
     {
@@ -311,7 +318,11 @@ fn main() -> Result<(), slint::PlatformError> {
         let file_model = file_model.clone();
         window.on_drag_scroll_applied(move |applied_delta| {
             if let Some(window) = window_weak.upgrade() {
-                state.execute_drag_autoscroll_step_from_ui(applied_delta, &window, file_model.as_ref());
+                state.execute_drag_autoscroll_step_from_ui(
+                    applied_delta,
+                    &window,
+                    file_model.as_ref(),
+                );
             }
         });
     }
@@ -344,7 +355,15 @@ fn main() -> Result<(), slint::PlatformError> {
         let file_model = file_model.clone();
         window.on_register_visible_item_layout(move |index, x, y, width, height| {
             if let Some(window) = window_weak.upgrade() {
-                state.register_visible_item_layout(index, x, y, width, height, &window, file_model.as_ref());
+                state.register_visible_item_layout(
+                    index,
+                    x,
+                    y,
+                    width,
+                    height,
+                    &window,
+                    file_model.as_ref(),
+                );
             }
         });
     }
@@ -470,6 +489,17 @@ fn main() -> Result<(), slint::PlatformError> {
         window.on_filter_updated(move |query| {
             if let Some(window) = window_weak.upgrade() {
                 state.set_filter_query(query.to_string(), &window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
+        window.on_process_directory_load_results(move || {
+            if let Some(window) = window_weak.upgrade() {
+                state.process_directory_load_results(&window, file_model.as_ref());
             }
         });
     }
