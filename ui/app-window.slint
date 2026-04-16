@@ -559,6 +559,10 @@ export component AppWindow inherits Window {
                 edited(value) => {
                     root.rename-draft-updated(value);
                 }
+                accepted(value) => {
+                    root.rename-draft-updated(value);
+                    root.commit-rename();
+                }
             }
 
             InlineButton {
