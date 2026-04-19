@@ -471,15 +471,39 @@ export component AppWindow inherits Window {
             } else if (event.text == Key.F2) {
                 root.request-rename();
                 accept
+            } else if (event.text == Key.F5) {
+                root.refresh-directory();
+                accept
+            } else if (event.modifiers.alt && event.text == Key.LeftArrow) {
+                root.navigate-back();
+                accept
+            } else if (event.modifiers.alt && event.text == Key.RightArrow) {
+                root.navigate-forward();
+                accept
+            } else if (event.modifiers.alt && event.text == Key.UpArrow) {
+                root.navigate-up();
+                accept
+            } else if (event.modifiers.alt && event.text == Key.Home) {
+                root.navigate-home();
+                accept
             } else if (event.modifiers.control && (event.text == "d" || event.text == "D")) {
                 root.toggle-current-favorite();
                 accept
             } else if (event.modifiers.control && (event.text == "h" || event.text == "H")) {
                 root.toggle-show-hidden-files();
                 accept
+            } else if (event.modifiers.control && (event.text == "o" || event.text == "O")) {
+                root.open-selected();
+                accept
+            } else if (event.modifiers.control && (event.text == "r" || event.text == "R")) {
+                root.refresh-directory();
+                accept
             } else if (event.modifiers.control && (event.text == "f" || event.text == "F")) {
                 search-input.focus();
                 search-input.select-all();
+                accept
+            } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N")) {
+                root.create-folder();
                 accept
             } else if (event.modifiers.control && (event.text == "l" || event.text == "L")) {
                 path-input.focus();

@@ -55,6 +55,7 @@ Files Rusted/
 - 已实现基础多选和范围选择
 - 已把“焦点项”和“选中集合”分开
 - 已实现基础快捷键：方向键、`Ctrl+方向键`、`Shift` 扩选、`Home/End`、`Space`、`Ctrl+A/C/X/V`、`Delete`、`F2`、`Enter`
+- 已补上资源管理器常用快捷键：`Alt+Left/Right/Up/Home`、`F5`、`Ctrl+R`、`Ctrl+O`、`Ctrl+Shift+N`
 - 已为列表项补上基础右键菜单
 - 已为主工作区补上空白区域上下文菜单
 - 已加强焦点项和选中项的视觉区分
