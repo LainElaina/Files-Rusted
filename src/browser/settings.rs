@@ -1,7 +1,7 @@
 use std::{
     env, fs,
     io::{self, ErrorKind},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 const SETTINGS_PATH_ENV: &str = "FILES_RUSTED_SETTINGS_PATH";
@@ -11,6 +11,7 @@ const DEFAULT_SORT_MODE_KEY: &str = "name-asc";
 pub(super) struct BrowserSettings {
     pub(super) sort_mode_key: String,
     pub(super) show_hidden: bool,
+    pub(super) last_directory: Option<PathBuf>,
 }
 
 impl Default for BrowserSettings {
@@ -18,6 +19,7 @@ impl Default for BrowserSettings {
         Self {
             sort_mode_key: DEFAULT_SORT_MODE_KEY.to_string(),
             show_hidden: false,
+            last_directory: None,
         }
     }
 }
@@ -27,6 +29,10 @@ pub(super) fn load_browser_settings() -> BrowserSettings {
         return BrowserSettings::default();
     };
 
+    load_browser_settings_from_path(&path)
+}
+
+fn load_browser_settings_from_path(path: &Path) -> BrowserSettings {
     let Ok(contents) = fs::read_to_string(path) else {
         return BrowserSettings::default();
     };
@@ -42,13 +48,23 @@ pub(super) fn save_browser_settings(settings: &BrowserSettings) -> io::Result<()
         ));
     };
 
+    save_browser_settings_to_path(&path, settings)
+}
+
+fn save_browser_settings_to_path(path: &Path, settings: &BrowserSettings) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
 
     let contents = format!(
-        "sort_mode={}\nshow_hidden={}\n",
-        settings.sort_mode_key, settings.show_hidden
+        "sort_mode={}\nshow_hidden={}\nlast_directory={}\n",
+        settings.sort_mode_key,
+        settings.show_hidden,
+        settings
+            .last_directory
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default()
     );
     fs::write(path, contents)
 }
@@ -70,6 +86,12 @@ fn parse_browser_settings(contents: &str) -> BrowserSettings {
             }
             "show_hidden" => {
                 settings.show_hidden = matches!(value.trim(), "1" | "true" | "yes" | "on");
+            }
+            "last_directory" => {
+                let value = value.trim();
+                if !value.is_empty() {
+                    settings.last_directory = Some(PathBuf::from(value));
+                }
             }
             _ => {}
         }
@@ -98,13 +120,20 @@ fn settings_storage_path() -> Option<PathBuf> {
     }
 }
 
+pub(super) fn resolve_start_directory(
+    fallback_dir: &Path,
+    last_directory: Option<&PathBuf>,
+) -> PathBuf {
+    last_directory
+        .filter(|path| path.is_dir())
+        .cloned()
+        .unwrap_or_else(|| fallback_dir.to_path_buf())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_dir(name: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -116,42 +145,30 @@ mod tests {
 
     #[test]
     fn load_browser_settings_returns_defaults_when_storage_is_missing() {
-        let _lock = TEST_ENV_LOCK.lock().unwrap();
         let dir = test_dir("settings-missing");
         let storage = dir.join("missing").join("settings.txt");
-        unsafe {
-            env::set_var(SETTINGS_PATH_ENV, &storage);
-        }
 
-        let settings = load_browser_settings();
+        let settings = load_browser_settings_from_path(&storage);
 
         assert_eq!(settings, BrowserSettings::default());
-        unsafe {
-            env::remove_var(SETTINGS_PATH_ENV);
-        }
     }
 
     #[test]
     fn save_and_load_browser_settings_round_trip_through_override_path() {
-        let _lock = TEST_ENV_LOCK.lock().unwrap();
         let dir = test_dir("settings-round-trip");
         let storage = dir.join("config").join("settings.txt");
-        unsafe {
-            env::set_var(SETTINGS_PATH_ENV, &storage);
-        }
 
         let settings = BrowserSettings {
             sort_mode_key: "modified-newest".to_string(),
             show_hidden: true,
+            last_directory: Some(dir.join("workspace")),
         };
-        save_browser_settings(&settings).unwrap();
+        fs::create_dir_all(settings.last_directory.as_ref().unwrap()).unwrap();
+        save_browser_settings_to_path(&storage, &settings).unwrap();
 
-        let loaded = load_browser_settings();
+        let loaded = load_browser_settings_from_path(&storage);
 
         assert_eq!(loaded, settings);
-        unsafe {
-            env::remove_var(SETTINGS_PATH_ENV);
-        }
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -166,7 +183,22 @@ mod tests {
             BrowserSettings {
                 sort_mode_key: "size-desc".to_string(),
                 show_hidden: true,
+                last_directory: None,
             }
         );
+    }
+
+    #[test]
+    fn resolve_start_directory_prefers_existing_last_directory() {
+        let dir = test_dir("settings-last-dir");
+        let fallback = dir.join("fallback");
+        let remembered = dir.join("remembered");
+        fs::create_dir_all(&fallback).unwrap();
+        fs::create_dir_all(&remembered).unwrap();
+
+        let resolved = resolve_start_directory(&fallback, Some(&remembered));
+
+        assert_eq!(resolved, remembered);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

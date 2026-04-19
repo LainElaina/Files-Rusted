@@ -14,6 +14,7 @@ use std::{fs, time::SystemTime};
 pub(super) fn build_sidebar_entries(
     start_dir: &Path,
     favorite_paths: &[PathBuf],
+    recent_paths: &[PathBuf],
 ) -> (Vec<SidebarEntry>, Vec<PathBuf>) {
     let mut entries = Vec::new();
     let mut paths = Vec::new();
@@ -37,6 +38,16 @@ pub(super) fn build_sidebar_entries(
             &favorite_label(favorite),
             &short_path_label(favorite),
             favorite.clone(),
+        );
+    }
+
+    for recent in recent_paths {
+        push_sidebar_entry_with_caption(
+            &mut entries,
+            &mut paths,
+            &recent_label(recent),
+            &short_path_label(recent),
+            recent.clone(),
         );
     }
 
@@ -211,6 +222,15 @@ fn favorite_label(path: &Path) -> String {
     format!("★ {name}")
 }
 
+fn recent_label(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| path.display().to_string());
+    format!("Recent: {name}")
+}
+
 fn breadcrumb_label(path: &Path) -> String {
     path.file_name()
         .map(|value| value.to_string_lossy().into_owned())
@@ -365,11 +385,12 @@ mod tests {
     }
 
     #[test]
-    fn build_sidebar_entries_appends_favorites_after_default_locations() {
+    fn build_sidebar_entries_appends_favorites_and_recents_after_default_locations() {
         let start_dir = PathBuf::from("/workspace/project");
         let favorites = vec![PathBuf::from("/workspace/project/docs")];
+        let recents = vec![PathBuf::from("/workspace/archive")];
 
-        let (entries, paths) = build_sidebar_entries(&start_dir, &favorites);
+        let (entries, paths) = build_sidebar_entries(&start_dir, &favorites, &recents);
 
         assert!(entries.iter().any(|entry| entry.label.as_str() == "Home"));
         assert!(entries
@@ -377,7 +398,11 @@ mod tests {
             .any(|entry| entry.label.as_str() == "Workspace"));
         assert!(entries.iter().any(|entry| entry.label.as_str() == "Root"));
         assert!(entries.iter().any(|entry| entry.label.as_str() == "★ docs"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.label.as_str() == "Recent: archive"));
         assert!(paths.contains(&PathBuf::from("/workspace/project/docs")));
+        assert!(paths.contains(&PathBuf::from("/workspace/archive")));
     }
 
     #[test]

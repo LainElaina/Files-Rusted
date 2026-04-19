@@ -19,6 +19,8 @@ mod favorites;
 mod file_ops;
 #[path = "browser/pathing.rs"]
 mod pathing;
+#[path = "browser/recents.rs"]
+mod recents;
 #[path = "browser/selection.rs"]
 mod selection;
 #[path = "browser/settings.rs"]
@@ -43,8 +45,11 @@ use pathing::{
     build_breadcrumbs, build_sidebar_entries, current_sidebar_index, resolve_navigation_target,
     PathNavigationTarget,
 };
+use recents::{load_recent_paths, remember_recent_path, save_recent_paths};
 use selection::{normalize_operation_paths, SelectionState};
-use settings::{load_browser_settings, save_browser_settings, BrowserSettings};
+use settings::{
+    load_browser_settings, resolve_start_directory, save_browser_settings, BrowserSettings,
+};
 
 pub struct BrowserState {
     current_dir: RefCell<PathBuf>,
@@ -62,6 +67,7 @@ pub struct BrowserState {
     filter_query: RefCell<String>,
     path_draft: RefCell<String>,
     favorite_paths: RefCell<Vec<PathBuf>>,
+    recent_paths: RefCell<Vec<PathBuf>>,
     sidebar_paths: RefCell<Vec<PathBuf>>,
     breadcrumb_paths: RefCell<Vec<PathBuf>>,
     back_history: RefCell<Vec<PathBuf>>,
@@ -75,17 +81,34 @@ pub struct BrowserState {
     directory_load_pending: RefCell<bool>,
     pending_directory_load_results: SharedLoadResults<Vec<DirectoryEntry>>,
     pending_reveal_path: RefCell<Option<PathBuf>>,
+    last_loaded_directory: RefCell<PathBuf>,
 }
 
 impl BrowserState {
     pub fn new(start_dir: PathBuf) -> (Self, Vec<SidebarEntry>) {
-        let favorite_paths = load_favorite_paths();
-        let settings = load_browser_settings();
-        let (sidebar_entries, sidebar_paths) = build_sidebar_entries(&start_dir, &favorite_paths);
-        let start_dir_label = start_dir.display().to_string();
+        let favorite_paths = if cfg!(test) {
+            Vec::new()
+        } else {
+            load_favorite_paths()
+        };
+        let recent_paths = if cfg!(test) {
+            Vec::new()
+        } else {
+            load_recent_paths()
+        };
+        let settings = if cfg!(test) {
+            BrowserSettings::default()
+        } else {
+            load_browser_settings()
+        };
+        let effective_start_dir =
+            resolve_start_directory(&start_dir, settings.last_directory.as_ref());
+        let (sidebar_entries, sidebar_paths) =
+            build_sidebar_entries(&effective_start_dir, &favorite_paths, &recent_paths);
+        let start_dir_label = effective_start_dir.display().to_string();
         (
             Self {
-                current_dir: RefCell::new(start_dir),
+                current_dir: RefCell::new(effective_start_dir.clone()),
                 loaded_entries: RefCell::new(Vec::new()),
                 visible_paths: RefCell::new(Vec::new()),
                 visible_item_layouts: RefCell::new(Vec::new()),
@@ -100,6 +123,7 @@ impl BrowserState {
                 filter_query: RefCell::new(String::new()),
                 path_draft: RefCell::new(start_dir_label),
                 favorite_paths: RefCell::new(favorite_paths),
+                recent_paths: RefCell::new(recent_paths),
                 sidebar_paths: RefCell::new(sidebar_paths),
                 breadcrumb_paths: RefCell::new(Vec::new()),
                 back_history: RefCell::new(Vec::new()),
@@ -113,6 +137,7 @@ impl BrowserState {
                 directory_load_pending: RefCell::new(false),
                 pending_directory_load_results: Arc::new(Mutex::new(Vec::new())),
                 pending_reveal_path: RefCell::new(None),
+                last_loaded_directory: RefCell::new(effective_start_dir),
             },
             sidebar_entries,
         )
@@ -218,6 +243,7 @@ impl BrowserState {
                     *self.loaded_entries.borrow_mut() = entries;
                     self.clear_status_override();
                     self.apply_pending_reveal_if_ready();
+                    self.record_successful_directory_load();
                     self.finish_directory_load_request(result.generation, true);
                     LoadResultAction::ApplySuccess
                 } else {
@@ -1432,7 +1458,8 @@ impl BrowserState {
 
     fn update_sidebar_items(&self, window: &AppWindow, current_dir: &Path) {
         let favorite_paths = self.favorite_paths.borrow().clone();
-        let (items, paths) = build_sidebar_entries(current_dir, &favorite_paths);
+        let recent_paths = self.recent_paths.borrow().clone();
+        let (items, paths) = build_sidebar_entries(current_dir, &favorite_paths, &recent_paths);
         *self.sidebar_paths.borrow_mut() = paths;
         window.set_sidebar_items(ModelRc::from(Rc::new(VecModel::from(items))));
     }
@@ -1645,11 +1672,36 @@ impl BrowserState {
     }
 
     fn persist_browser_settings(&self) -> std::io::Result<()> {
+        if cfg!(test) {
+            return Ok(());
+        }
+
         let settings = BrowserSettings {
             sort_mode_key: self.sort_mode.borrow().storage_key().to_string(),
             show_hidden: *self.show_hidden.borrow(),
+            last_directory: Some(self.last_loaded_directory.borrow().clone()),
         };
         save_browser_settings(&settings)
+    }
+
+    fn record_successful_directory_load(&self) {
+        let current_dir = self.current_dir.borrow().clone();
+        *self.last_loaded_directory.borrow_mut() = current_dir.clone();
+
+        let next_recents = remember_recent_path(&self.recent_paths.borrow(), &current_dir);
+        *self.recent_paths.borrow_mut() = next_recents.clone();
+
+        if cfg!(test) {
+            return;
+        }
+
+        if let Err(error) = save_recent_paths(&next_recents) {
+            *self.status_override.borrow_mut() = Some(format!("Failed to save recents: {error}"));
+        }
+
+        if let Err(error) = self.persist_browser_settings() {
+            *self.status_override.borrow_mut() = Some(format!("Failed to save settings: {error}"));
+        }
     }
 
     fn breadcrumb_target(&self, index: i32) -> Option<PathBuf> {
