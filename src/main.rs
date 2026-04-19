@@ -252,6 +252,28 @@ fn main() -> Result<(), slint::PlatformError> {
         let window_weak = window.as_weak();
         let state = state.clone();
         let file_model = file_model.clone();
+        window.on_remove_sidebar_item(move |index| {
+            if let Some(window) = window_weak.upgrade() {
+                state.remove_sidebar_item(index, &window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
+        window.on_clear_recent_directories(move || {
+            if let Some(window) = window_weak.upgrade() {
+                state.clear_recent_directories(&window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
         window.on_activate_breadcrumb(move |index| {
             if let Some(window) = window_weak.upgrade() {
                 state.activate_breadcrumb(index, &window, file_model.as_ref());

@@ -11,47 +11,75 @@ use std::{
 #[cfg(test)]
 use std::{fs, time::SystemTime};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SidebarItemKind {
+    Default,
+    Favorite,
+    Recent,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct SidebarItemTarget {
+    pub(super) path: PathBuf,
+    pub(super) kind: SidebarItemKind,
+}
+
 pub(super) fn build_sidebar_entries(
     start_dir: &Path,
     favorite_paths: &[PathBuf],
     recent_paths: &[PathBuf],
-) -> (Vec<SidebarEntry>, Vec<PathBuf>) {
+) -> (Vec<SidebarEntry>, Vec<SidebarItemTarget>) {
     let mut entries = Vec::new();
-    let mut paths = Vec::new();
+    let mut targets = Vec::new();
 
     if let Some(home) = home_directory() {
-        push_sidebar_entry(&mut entries, &mut paths, "Home", home);
+        push_sidebar_entry(
+            &mut entries,
+            &mut targets,
+            "Home",
+            home,
+            SidebarItemKind::Default,
+        );
     }
 
     push_sidebar_entry(
         &mut entries,
-        &mut paths,
+        &mut targets,
         "Workspace",
         start_dir.to_path_buf(),
+        SidebarItemKind::Default,
     );
-    push_sidebar_entry(&mut entries, &mut paths, "Root", filesystem_root(start_dir));
+    push_sidebar_entry(
+        &mut entries,
+        &mut targets,
+        "Root",
+        filesystem_root(start_dir),
+        SidebarItemKind::Default,
+    );
 
     for favorite in favorite_paths {
         push_sidebar_entry_with_caption(
             &mut entries,
-            &mut paths,
+            &mut targets,
             &favorite_label(favorite),
             &short_path_label(favorite),
             favorite.clone(),
+            SidebarItemKind::Favorite,
         );
     }
 
     for recent in recent_paths {
         push_sidebar_entry_with_caption(
             &mut entries,
-            &mut paths,
+            &mut targets,
             &recent_label(recent),
             &short_path_label(recent),
             recent.clone(),
+            SidebarItemKind::Recent,
         );
     }
 
-    (entries, paths)
+    (entries, targets)
 }
 
 pub(super) fn build_breadcrumbs(current_dir: &Path) -> (Vec<BreadcrumbEntry>, Vec<PathBuf>) {
@@ -164,12 +192,15 @@ pub(super) fn resolve_navigation_target(
     Err(format!("Path not found: {}", trimmed))
 }
 
-pub(super) fn current_sidebar_index(sidebar_paths: &[PathBuf], current_dir: &Path) -> i32 {
-    sidebar_paths
+pub(super) fn current_sidebar_index(
+    sidebar_targets: &[SidebarItemTarget],
+    current_dir: &Path,
+) -> i32 {
+    sidebar_targets
         .iter()
         .enumerate()
-        .filter(|(_, path)| current_dir.starts_with(path))
-        .max_by_key(|(_, path)| path.components().count())
+        .filter(|(_, target)| current_dir.starts_with(&target.path))
+        .max_by_key(|(_, target)| target.path.components().count())
         .map(|(index, _)| index as i32)
         .unwrap_or(0)
 }
@@ -188,29 +219,40 @@ pub(super) fn short_path_label(path: &Path) -> String {
 
 fn push_sidebar_entry(
     entries: &mut Vec<SidebarEntry>,
-    paths: &mut Vec<PathBuf>,
+    targets: &mut Vec<SidebarItemTarget>,
     label: &str,
     path: PathBuf,
+    kind: SidebarItemKind,
 ) {
-    push_sidebar_entry_with_caption(entries, paths, label, &short_path_label(&path), path);
+    push_sidebar_entry_with_caption(
+        entries,
+        targets,
+        label,
+        &short_path_label(&path),
+        path,
+        kind,
+    );
 }
 
 fn push_sidebar_entry_with_caption(
     entries: &mut Vec<SidebarEntry>,
-    paths: &mut Vec<PathBuf>,
+    targets: &mut Vec<SidebarItemTarget>,
     label: &str,
     caption: &str,
     path: PathBuf,
+    kind: SidebarItemKind,
 ) {
-    if paths.iter().any(|existing| existing == &path) {
+    if targets.iter().any(|existing| existing.path == path) {
         return;
     }
 
     entries.push(SidebarEntry {
         label: SharedString::from(label),
         caption: SharedString::from(caption),
+        removable: !matches!(kind, SidebarItemKind::Default),
+        remove_action_label: SharedString::from(sidebar_remove_label(kind)),
     });
-    paths.push(path);
+    targets.push(SidebarItemTarget { path, kind });
 }
 
 fn favorite_label(path: &Path) -> String {
@@ -229,6 +271,14 @@ fn recent_label(path: &Path) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| path.display().to_string());
     format!("Recent: {name}")
+}
+
+fn sidebar_remove_label(kind: SidebarItemKind) -> &'static str {
+    match kind {
+        SidebarItemKind::Default => "",
+        SidebarItemKind::Favorite => "Remove Favorite",
+        SidebarItemKind::Recent => "Remove from Recents",
+    }
 }
 
 fn breadcrumb_label(path: &Path) -> String {
@@ -316,18 +366,27 @@ mod tests {
 
     #[test]
     fn current_sidebar_index_prefers_deepest_matching_path() {
-        let sidebar_paths = vec![
-            PathBuf::from("/"),
-            PathBuf::from("/workspace"),
-            PathBuf::from("/workspace/project"),
+        let sidebar_targets = vec![
+            SidebarItemTarget {
+                path: PathBuf::from("/"),
+                kind: SidebarItemKind::Default,
+            },
+            SidebarItemTarget {
+                path: PathBuf::from("/workspace"),
+                kind: SidebarItemKind::Default,
+            },
+            SidebarItemTarget {
+                path: PathBuf::from("/workspace/project"),
+                kind: SidebarItemKind::Favorite,
+            },
         ];
 
         assert_eq!(
-            current_sidebar_index(&sidebar_paths, Path::new("/workspace/project/src")),
+            current_sidebar_index(&sidebar_targets, Path::new("/workspace/project/src")),
             2
         );
         assert_eq!(
-            current_sidebar_index(&sidebar_paths, Path::new("/workspace/other")),
+            current_sidebar_index(&sidebar_targets, Path::new("/workspace/other")),
             1
         );
     }
@@ -401,8 +460,21 @@ mod tests {
         assert!(entries
             .iter()
             .any(|entry| entry.label.as_str() == "Recent: archive"));
-        assert!(paths.contains(&PathBuf::from("/workspace/project/docs")));
-        assert!(paths.contains(&PathBuf::from("/workspace/archive")));
+        assert!(paths.iter().any(
+            |target| target.path == PathBuf::from("/workspace/project/docs")
+                && target.kind == SidebarItemKind::Favorite
+        ));
+        assert!(paths
+            .iter()
+            .any(|target| target.path == PathBuf::from("/workspace/archive")
+                && target.kind == SidebarItemKind::Recent));
+        assert!(entries.iter().any(
+            |entry| entry.removable && entry.remove_action_label.as_str() == "Remove Favorite"
+        ));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.removable
+                && entry.remove_action_label.as_str() == "Remove from Recents"));
     }
 
     #[test]

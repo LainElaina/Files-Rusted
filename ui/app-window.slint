@@ -3,6 +3,8 @@ import { Button, CheckBox, ComboBox, HorizontalBox, LineEdit, ListView, Vertical
 export struct SidebarEntry {
     label: string,
     caption: string,
+    removable: bool,
+    remove-action-label: string,
 }
 
 export struct FileEntry {
@@ -65,6 +67,7 @@ component SidebarRow inherits Rectangle {
     in property<SidebarEntry> entry;
     in property<bool> selected: false;
     callback activated;
+    callback remove-requested;
 
     height: 42px;
     border-radius: 7px;
@@ -121,6 +124,25 @@ component SidebarRow inherits Rectangle {
     sidebar-touch := TouchArea {
         clicked => {
             root.activated();
+        }
+    }
+
+    ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: "Open";
+                activated => {
+                    root.activated();
+                }
+            }
+
+            MenuItem {
+                title: entry.remove-action-label;
+                enabled: entry.removable;
+                activated => {
+                    root.remove-requested();
+                }
+            }
         }
     }
 }
@@ -341,6 +363,7 @@ export component AppWindow inherits Window {
     in-out property<bool> can-open-selection: false;
     in-out property<bool> can-transfer-selection: false;
     in-out property<bool> can-paste: false;
+    in-out property<bool> can-clear-recents: false;
     in-out property<bool> can-rename-selection: false;
     in-out property<bool> can-delete-selection: false;
     in-out property<bool> rename-mode: false;
@@ -387,6 +410,8 @@ export component AppWindow inherits Window {
     callback navigate-up();
     callback refresh-directory();
     callback activate-sidebar(int);
+    callback remove-sidebar-item(int);
+    callback clear-recent-directories();
     callback activate-breadcrumb(int);
     callback activate-file(int, bool, bool);
     callback open-item(int);
@@ -709,6 +734,14 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                InlineButton {
+                    text: "Clear Recents";
+                    enabled: root.can-clear-recents;
+                    clicked => {
+                        root.clear-recent-directories();
+                    }
+                }
+
                 Text {
                     text: "Sort";
                     width: 28px;
@@ -837,6 +870,9 @@ export component AppWindow inherits Window {
                         selected: root.active-sidebar-index == i;
                         activated => {
                             root.activate-sidebar(i);
+                        }
+                        remove-requested => {
+                            root.remove-sidebar-item(i);
                         }
                     }
                 }
