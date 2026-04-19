@@ -1622,6 +1622,8 @@ struct DirectoryEntry {
     is_dir: bool,
     size_bytes: u64,
     size_label: String,
+    modified_timestamp: Option<u64>,
+    modified_label: String,
 }
 
 impl DirectoryEntry {
@@ -1631,6 +1633,7 @@ impl DirectoryEntry {
             path: SharedString::from(self.path_label),
             kind: SharedString::from(self.kind_label),
             size: SharedString::from(self.size_label),
+            modified: SharedString::from(self.modified_label),
             selected,
             focused,
         }
@@ -1643,16 +1646,27 @@ enum SortMode {
     NameDesc,
     SizeAsc,
     SizeDesc,
+    ModifiedNewest,
+    ModifiedOldest,
 }
 
 impl SortMode {
-    const ALL: [Self; 4] = [Self::NameAsc, Self::NameDesc, Self::SizeAsc, Self::SizeDesc];
+    const ALL: [Self; 6] = [
+        Self::NameAsc,
+        Self::NameDesc,
+        Self::SizeAsc,
+        Self::SizeDesc,
+        Self::ModifiedNewest,
+        Self::ModifiedOldest,
+    ];
 
     fn from_index(index: i32) -> Self {
         match index {
             1 => Self::NameDesc,
             2 => Self::SizeAsc,
             3 => Self::SizeDesc,
+            4 => Self::ModifiedNewest,
+            5 => Self::ModifiedOldest,
             _ => Self::NameAsc,
         }
     }
@@ -1663,6 +1677,8 @@ impl SortMode {
             Self::NameDesc => 1,
             Self::SizeAsc => 2,
             Self::SizeDesc => 3,
+            Self::ModifiedNewest => 4,
+            Self::ModifiedOldest => 5,
         }
     }
 
@@ -1672,6 +1688,8 @@ impl SortMode {
             Self::NameDesc => "Name Z-A",
             Self::SizeAsc => "Size Small-Large",
             Self::SizeDesc => "Size Large-Small",
+            Self::ModifiedNewest => "Modified Newest",
+            Self::ModifiedOldest => "Modified Oldest",
         }
     }
 
@@ -1687,7 +1705,34 @@ impl SortMode {
                 .size_bytes
                 .cmp(&left.size_bytes)
                 .then_with(|| left.name_lower.cmp(&right.name_lower)),
+            Self::ModifiedNewest => {
+                compare_modified_timestamp(left.modified_timestamp, right.modified_timestamp, true)
+                    .then_with(|| left.name_lower.cmp(&right.name_lower))
+            }
+            Self::ModifiedOldest => {
+                compare_modified_timestamp(left.modified_timestamp, right.modified_timestamp, false)
+                    .then_with(|| left.name_lower.cmp(&right.name_lower))
+            }
         })
+    }
+}
+
+fn compare_modified_timestamp(
+    left: Option<u64>,
+    right: Option<u64>,
+    newest_first: bool,
+) -> std::cmp::Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            if newest_first {
+                right.cmp(&left)
+            } else {
+                left.cmp(&right)
+            }
+        }
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
     }
 }
 
@@ -1795,11 +1840,66 @@ mod tests {
             is_dir: false,
             size_bytes: 12,
             size_label: "12 B".to_string(),
+            modified_timestamp: Some(10),
+            modified_label: "2026-04-19 08:00".to_string(),
         };
 
         let text = view::build_status_text(0, 3, "abc", Some(&entry), false, 1, 1);
 
         assert_eq!(text.as_str(), "notes.txt is hidden by the current filter");
+    }
+
+    #[test]
+    fn build_browser_view_sorts_by_modified_newest_first() {
+        let entries = vec![
+            directory_entry("/workspace/older.txt", false, 10),
+            directory_entry("/workspace/newer.txt", false, 30),
+            directory_entry("/workspace/docs", true, 20),
+        ];
+
+        let view = view::build_browser_view(
+            &entries,
+            SortMode::ModifiedNewest,
+            "",
+            &SelectionState::default(),
+            false,
+            "",
+        );
+
+        assert_eq!(
+            view.visible_paths,
+            vec![
+                PathBuf::from("/workspace/docs"),
+                PathBuf::from("/workspace/newer.txt"),
+                PathBuf::from("/workspace/older.txt"),
+            ]
+        );
+        assert_eq!(view.file_rows[1].modified.as_str(), "stamp-30");
+    }
+
+    #[test]
+    fn build_browser_view_sorts_by_modified_oldest_first() {
+        let entries = vec![
+            directory_entry("/workspace/older.txt", false, 10),
+            directory_entry("/workspace/newer.txt", false, 30),
+        ];
+
+        let view = view::build_browser_view(
+            &entries,
+            SortMode::ModifiedOldest,
+            "",
+            &SelectionState::default(),
+            false,
+            "",
+        );
+
+        assert_eq!(
+            view.visible_paths,
+            vec![
+                PathBuf::from("/workspace/older.txt"),
+                PathBuf::from("/workspace/newer.txt"),
+            ]
+        );
     }
 
     #[test]
@@ -2759,6 +2859,8 @@ mod tests {
             is_dir,
             size_bytes,
             size_label: format!("{} B", size_bytes),
+            modified_timestamp: Some(size_bytes),
+            modified_label: format!("stamp-{size_bytes}"),
         }
     }
 }

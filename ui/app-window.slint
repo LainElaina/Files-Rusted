@@ -1,4 +1,4 @@
-import { Button, HorizontalBox, LineEdit, ListView, VerticalBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, HorizontalBox, LineEdit, ListView, VerticalBox } from "std-widgets.slint";
 
 export struct SidebarEntry {
     label: string,
@@ -10,6 +10,7 @@ export struct FileEntry {
     path: string,
     kind: string,
     size: string,
+    modified: string,
     selected: bool,
     focused: bool,
 }
@@ -128,6 +129,7 @@ component FileRow inherits Rectangle {
     in property<FileEntry> entry;
     in property<length> type-column-width: 112px;
     in property<length> size-column-width: 92px;
+    in property<length> modified-column-width: 148px;
     callback activated(bool, bool);
     callback open-requested;
     callback copy-requested;
@@ -197,6 +199,17 @@ component FileRow inherits Rectangle {
         Text {
             text: entry.size;
             width: root.size-column-width;
+            color: #6b7280;
+            font-size: 12px;
+            wrap: no-wrap;
+            overflow: elide;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: entry.modified;
+            width: root.modified-column-width;
             color: #6b7280;
             font-size: 12px;
             wrap: no-wrap;
@@ -316,6 +329,7 @@ export component AppWindow inherits Window {
     in-out property<[string]> sort-options;
     in property<length> type-column-width: 112px;
     in property<length> size-column-width: 92px;
+    in property<length> modified-column-width: 148px;
 
     callback create-file();
     callback request-copy();
@@ -587,6 +601,24 @@ export component AppWindow inherits Window {
                         root.submit-path-navigation();
                     }
                 }
+
+                Text {
+                    text: "Sort";
+                    width: 28px;
+                    color: #64748b;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                ComboBox {
+                    width: 192px;
+                    model: root.sort-options;
+                    current-index <=> root.current-sort-index;
+                    selected => {
+                        root.sort-mode-selected(root.current-sort-index);
+                    }
+                }
             }
         }
 
@@ -852,6 +884,16 @@ export component AppWindow inherits Window {
                             horizontal-alignment: right;
                             vertical-alignment: center;
                         }
+
+                        Text {
+                            text: "Modified";
+                            width: root.modified-column-width;
+                            color: #6b7280;
+                            font-size: 12px;
+                            font-weight: 600;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                        }
                     }
 
                     Rectangle {
@@ -959,6 +1001,7 @@ export component AppWindow inherits Window {
                             entry: entry;
                             type-column-width: root.type-column-width;
                             size-column-width: root.size-column-width;
+                            modified-column-width: root.modified-column-width;
 
                             changed x => {
                                 root.register-visible-item-layout(i, self.x / 1px, self.y / 1px, self.width / 1px, self.height / 1px);

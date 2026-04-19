@@ -1,15 +1,17 @@
 use super::{DirectoryEntry, SidebarEntry};
 use crate::BreadcrumbEntry;
+use chrono::{DateTime, Local};
 use jwalk::WalkDir;
 use slint::SharedString;
 use std::{
     env,
     path::{Path, PathBuf},
+    time::UNIX_EPOCH,
 };
 #[cfg(test)]
 use std::{
     fs,
-    time::{SystemTime, UNIX_EPOCH},
+    time::SystemTime,
 };
 
 pub(super) fn build_sidebar_entries(
@@ -78,6 +80,11 @@ pub(super) fn load_directory_entries(path: &Path) -> Result<Vec<DirectoryEntry>,
 
             let is_dir = metadata.is_dir();
             let size_bytes = if is_dir { 0 } else { metadata.len() };
+            let modified_timestamp = metadata
+                .modified()
+                .ok()
+                .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs());
 
             Some(DirectoryEntry {
                 path_label: path.display().to_string(),
@@ -96,6 +103,10 @@ pub(super) fn load_directory_entries(path: &Path) -> Result<Vec<DirectoryEntry>,
                 name,
                 is_dir,
                 size_bytes,
+                modified_label: modified_timestamp
+                    .map(format_modified_timestamp)
+                    .unwrap_or_else(|| "—".to_string()),
+                modified_timestamp,
             })
         })
         .collect::<Vec<_>>();
@@ -259,6 +270,11 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{size:.1} {}", UNITS[unit_index])
     }
+}
+
+fn format_modified_timestamp(timestamp: u64) -> String {
+    let datetime = DateTime::<Local>::from(UNIX_EPOCH + std::time::Duration::from_secs(timestamp));
+    datetime.format("%Y-%m-%d %H:%M").to_string()
 }
 
 #[cfg(test)]
