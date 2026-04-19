@@ -477,6 +477,10 @@ export component AppWindow inherits Window {
             } else if (event.modifiers.control && (event.text == "h" || event.text == "H")) {
                 root.toggle-show-hidden-files();
                 accept
+            } else if (event.modifiers.control && (event.text == "f" || event.text == "F")) {
+                search-input.focus();
+                search-input.select-all();
+                accept
             } else if (event.modifiers.control && (event.text == "l" || event.text == "L")) {
                 path-input.focus();
                 path-input.select-all();
@@ -598,7 +602,7 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                LineEdit {
+                search-input := LineEdit {
                     min-width: 220px;
                     max-width: 260px;
                     text <=> root.filter-text;
@@ -606,6 +610,15 @@ export component AppWindow inherits Window {
                     enabled: !root.directory-load-pending;
                     edited(value) => {
                         root.filter-updated(value);
+                    }
+                }
+
+                InlineButton {
+                    text: "Clear";
+                    enabled: root.filter-text != "";
+                    clicked => {
+                        root.filter-text = "";
+                        root.filter-updated("");
                     }
                 }
             }
