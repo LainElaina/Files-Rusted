@@ -546,6 +546,45 @@ impl BrowserState {
         self.apply_view(window, file_model);
     }
 
+    pub fn duplicate_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        let selected = self.selection_state.borrow().selected_items_for_operation();
+        if selected.is_empty() {
+            *self.status_override.borrow_mut() =
+                Some("Select an item before duplicating".to_string());
+            self.apply_view(window, file_model);
+            return;
+        }
+
+        let current_dir = self.current_dir.borrow().clone();
+        let (duplicated_paths, failures) = duplicate_paths_into_directory(&selected, &current_dir);
+        if duplicated_paths.is_empty() {
+            *self.status_override.borrow_mut() = Some(if failures.is_empty() {
+                "Nothing was duplicated".to_string()
+            } else {
+                format!("Duplicate failed: {}", failures.join("; "))
+            });
+            self.apply_view(window, file_model);
+            return;
+        }
+
+        self.cancel_rename_internal();
+        self.selection_state.borrow_mut().set_explicit_selection(
+            duplicated_paths.clone(),
+            duplicated_paths.last().cloned(),
+            duplicated_paths.last().cloned(),
+        );
+        *self.status_override.borrow_mut() = Some(if failures.is_empty() {
+            format!("Duplicated {}", format_item_count(duplicated_paths.len()))
+        } else {
+            format!(
+                "Duplicated {}, {} issue(s)",
+                format_item_count(duplicated_paths.len()),
+                failures.len()
+            )
+        });
+        self.refresh(window, file_model);
+    }
+
     pub fn request_cut_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         let selected = self.selection_state.borrow().selected_items_for_operation();
         if selected.is_empty() {
@@ -577,6 +616,15 @@ impl BrowserState {
                 .borrow_mut()
                 .set_single_selection(Some(target));
             self.request_copy_selected(window, file_model);
+        }
+    }
+
+    pub fn duplicate_item(&self, index: i32, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        if let Some(target) = self.path_at_visible_index(index) {
+            self.selection_state
+                .borrow_mut()
+                .set_single_selection(Some(target));
+            self.duplicate_selected(window, file_model);
         }
     }
 
@@ -1990,10 +2038,37 @@ enum TransferKind {
     Cut,
 }
 
+fn duplicate_paths_into_directory(
+    sources: &[PathBuf],
+    current_dir: &Path,
+) -> (Vec<PathBuf>, Vec<String>) {
+    let mut duplicated_paths = Vec::new();
+    let mut failures = Vec::new();
+
+    for source in sources {
+        if !source.exists() {
+            failures.push(format!("{} no longer exists", item_name(source)));
+            continue;
+        }
+
+        let destination = destination_for_transfer(TransferKind::Copy, source, current_dir);
+        match copy_path(source, &destination) {
+            Ok(()) => duplicated_paths.push(destination),
+            Err(error) => failures.push(format!("{}: {}", item_name(source), error)),
+        }
+    }
+
+    (duplicated_paths, failures)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use slint::Model;
+    use std::{
+        env, fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn build_browser_view_filters_rows_and_keeps_focus_index() {
@@ -2268,6 +2343,24 @@ mod tests {
 
         assert_eq!(message, "Cleared recent directories");
         assert!(state.recent_paths.borrow().is_empty());
+    }
+
+    #[test]
+    fn duplicate_paths_into_directory_creates_copy_suffix_in_same_folder() {
+        let dir = test_dir("duplicate-copy");
+        fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("report.txt");
+        fs::write(&source, "hello").unwrap();
+
+        let (duplicated, failures) =
+            duplicate_paths_into_directory(std::slice::from_ref(&source), &dir);
+
+        assert!(failures.is_empty());
+        assert_eq!(duplicated.len(), 1);
+        assert_eq!(duplicated[0].file_name().unwrap(), "report Copy.txt");
+        assert_eq!(fs::read_to_string(&duplicated[0]).unwrap(), "hello");
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -3231,5 +3324,13 @@ mod tests {
             modified_timestamp: Some(size_bytes),
             modified_label: format!("stamp-{size_bytes}"),
         }
+    }
+
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        env::temp_dir().join(format!("files-rusted-browser-{name}-{unique}"))
     }
 }

@@ -186,6 +186,7 @@ component FileRow inherits Rectangle {
     in property<length> modified-column-width: 148px;
     callback activated(bool, bool);
     callback open-requested;
+    callback duplicate-requested;
     callback copy-requested;
     callback cut-requested;
     callback rename-requested;
@@ -318,6 +319,13 @@ component FileRow inherits Rectangle {
             }
 
             MenuItem {
+                title: "Duplicate";
+                activated => {
+                    root.duplicate-requested();
+                }
+            }
+
+            MenuItem {
                 title: "Cut";
                 activated => {
                     root.cut-requested();
@@ -391,6 +399,7 @@ export component AppWindow inherits Window {
 
     callback create-file();
     callback request-copy();
+    callback duplicate-selected();
     callback request-cut();
     callback paste-into-current-directory();
     callback create-folder();
@@ -415,6 +424,7 @@ export component AppWindow inherits Window {
     callback activate-breadcrumb(int);
     callback activate-file(int, bool, bool);
     callback open-item(int);
+    callback duplicate-item(int);
     callback request-copy-item(int);
     callback request-cut-item(int);
     callback request-rename-item(int);
@@ -713,6 +723,14 @@ export component AppWindow inherits Window {
                 }
 
                 InlineButton {
+                    text: "Duplicate";
+                    enabled: root.can-transfer-selection;
+                    clicked => {
+                        root.duplicate-selected();
+                    }
+                }
+
+                InlineButton {
                     text: "New File";
                     clicked => {
                         root.create-file();
@@ -919,6 +937,14 @@ export component AppWindow inherits Window {
                         enabled: root.can-transfer-selection;
                         activated => {
                             root.request-copy();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Duplicate";
+                        enabled: root.can-transfer-selection;
+                        activated => {
+                            root.duplicate-selected();
                         }
                     }
 
@@ -1169,6 +1195,9 @@ export component AppWindow inherits Window {
                             }
                             open-requested => {
                                 root.open-item(i);
+                            }
+                            duplicate-requested => {
+                                root.duplicate-item(i);
                             }
                             copy-requested => {
                                 root.request-copy-item(i);

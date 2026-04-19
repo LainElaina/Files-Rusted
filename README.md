@@ -48,6 +48,7 @@ Files Rusted/
 - 已支持从侧边栏移除收藏和最近目录
 - 已补上工具栏常用动作按钮
 - 已支持搜索框快速聚焦与一键清空
+- 已支持直接 Duplicate 当前选择
 - 已实现 `Back / Forward` 导航历史
 - 已实现面包屑导航
 - 已实现路径直接输入并跳转
@@ -104,7 +105,7 @@ Files Rusted/
    - 支持从侧边栏移除单条最近目录
    - 支持通过工具栏 `Clear Recents` 一键清空最近目录
 6. 当前已具备基础工具栏动作：
-   - 支持从工具栏直接触发 `Open / New File / New Folder / Paste / Clear Recents`
+   - 支持从工具栏直接触发 `Open / Duplicate / New File / New Folder / Paste / Clear Recents`
    - `Open` 和 `Paste` 会根据当前选择或剪贴状态自动启用 / 禁用
    - 这条路径可作为右键菜单之外的显式操作入口
 7. 当前已具备搜索栏增强：
@@ -150,9 +151,10 @@ Files Rusted/
 14. 当前已接入最小传输操作：
    - `Copy / Cut`：把当前选中项放入应用内剪贴状态
    - `Paste`：粘贴到当前目录；复制支持同目录生成 `Copy` 后缀，剪切会在需要时自动生成不冲突名称
+   - `Duplicate`：直接在当前目录复制当前选中项，并沿用同目录 `Copy` 后缀命名策略
 15. 当前上下文菜单分三层：
-   - 项目菜单：`Open / Select / Copy / Cut / Rename / Delete`
-   - 工作区空白区域菜单：`Open / Copy / Cut / Paste / Rename / Delete / New File / New Folder / Select All / Clear Selection`
+   - 项目菜单：`Open / Select / Copy / Duplicate / Cut / Rename / Delete`
+   - 工作区空白区域菜单：`Open / Copy / Duplicate / Cut / Paste / Rename / Delete / New File / New Folder / Select All / Clear Selection`
    - 侧边栏菜单：`Open / Remove Favorite / Remove from Recents`
 16. 当前空白区域交互：
    - 左键点击空白区域：清空焦点和选中集合

@@ -51,6 +51,17 @@ fn main() -> Result<(), slint::PlatformError> {
         let window_weak = window.as_weak();
         let state = state.clone();
         let file_model = file_model.clone();
+        window.on_duplicate_selected(move || {
+            if let Some(window) = window_weak.upgrade() {
+                state.duplicate_selected(&window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
         window.on_request_cut(move || {
             if let Some(window) = window_weak.upgrade() {
                 state.request_cut_selected(&window, file_model.as_ref());
@@ -463,6 +474,17 @@ fn main() -> Result<(), slint::PlatformError> {
         window.on_open_item(move |index| {
             if let Some(window) = window_weak.upgrade() {
                 state.open_item(index, &window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
+        window.on_duplicate_item(move |index| {
+            if let Some(window) = window_weak.upgrade() {
+                state.duplicate_item(index, &window, file_model.as_ref());
             }
         });
     }
