@@ -110,6 +110,13 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
+        let state = state.clone();
+        window.on_path_draft_updated(move |value| {
+            state.set_path_draft(value.to_string());
+        });
+    }
+
+    {
         let window_weak = window.as_weak();
         let state = state.clone();
         let file_model = file_model.clone();
@@ -193,6 +200,17 @@ fn main() -> Result<(), slint::PlatformError> {
         window.on_refresh_directory(move || {
             if let Some(window) = window_weak.upgrade() {
                 state.refresh(&window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
+        window.on_submit_path_navigation(move || {
+            if let Some(window) = window_weak.upgrade() {
+                state.submit_path_navigation(&window, file_model.as_ref());
             }
         });
     }

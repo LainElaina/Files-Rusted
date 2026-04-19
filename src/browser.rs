@@ -34,7 +34,10 @@ use file_ops::{
     copy_path, destination_for_transfer, format_item_count, item_name, launch_path, move_path,
     unique_child_path,
 };
-use pathing::{build_breadcrumbs, build_sidebar_entries, current_sidebar_index};
+use pathing::{
+    build_breadcrumbs, build_sidebar_entries, current_sidebar_index, resolve_navigation_target,
+    PathNavigationTarget,
+};
 use selection::{normalize_operation_paths, SelectionState};
 
 pub struct BrowserState {
@@ -50,6 +53,7 @@ pub struct BrowserState {
     selection_state: RefCell<SelectionState>,
     sort_mode: RefCell<SortMode>,
     filter_query: RefCell<String>,
+    path_draft: RefCell<String>,
     sidebar_paths: Vec<PathBuf>,
     breadcrumb_paths: RefCell<Vec<PathBuf>>,
     back_history: RefCell<Vec<PathBuf>>,
@@ -62,11 +66,13 @@ pub struct BrowserState {
     active_load_generation: RefCell<Option<LoadGeneration>>,
     directory_load_pending: RefCell<bool>,
     pending_directory_load_results: SharedLoadResults<Vec<DirectoryEntry>>,
+    pending_reveal_path: RefCell<Option<PathBuf>>,
 }
 
 impl BrowserState {
     pub fn new(start_dir: PathBuf) -> (Self, Vec<SidebarEntry>) {
         let (sidebar_entries, sidebar_paths) = build_sidebar_entries(&start_dir);
+        let start_dir_label = start_dir.display().to_string();
         (
             Self {
                 current_dir: RefCell::new(start_dir),
@@ -81,6 +87,7 @@ impl BrowserState {
                 selection_state: RefCell::new(SelectionState::default()),
                 sort_mode: RefCell::new(SortMode::NameAsc),
                 filter_query: RefCell::new(String::new()),
+                path_draft: RefCell::new(start_dir_label),
                 sidebar_paths,
                 breadcrumb_paths: RefCell::new(Vec::new()),
                 back_history: RefCell::new(Vec::new()),
@@ -93,6 +100,7 @@ impl BrowserState {
                 active_load_generation: RefCell::new(None),
                 directory_load_pending: RefCell::new(false),
                 pending_directory_load_results: Arc::new(Mutex::new(Vec::new())),
+                pending_reveal_path: RefCell::new(None),
             },
             sidebar_entries,
         )
@@ -197,6 +205,7 @@ impl BrowserState {
                 if let Ok(entries) = result.outcome {
                     *self.loaded_entries.borrow_mut() = entries;
                     self.clear_status_override();
+                    self.apply_pending_reveal_if_ready();
                     self.finish_directory_load_request(result.generation, true);
                     LoadResultAction::ApplySuccess
                 } else {
@@ -218,6 +227,8 @@ impl BrowserState {
 
     pub fn refresh(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         let current_dir = self.current_dir.borrow().clone();
+        *self.path_draft.borrow_mut() = current_dir.display().to_string();
+        self.pending_reveal_path.borrow_mut().take();
         self.request_directory_load(current_dir, window, file_model);
     }
 
@@ -731,6 +742,63 @@ impl BrowserState {
         self.apply_view(window, file_model);
     }
 
+    pub fn set_path_draft(&self, value: String) {
+        *self.path_draft.borrow_mut() = value;
+    }
+
+    pub fn submit_path_navigation(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        self.clear_status_override();
+        self.cancel_rename_internal();
+
+        let current_dir = self.current_dir.borrow().clone();
+        let draft = self.path_draft.borrow().clone();
+
+        match resolve_navigation_target(&draft, &current_dir) {
+            Ok(PathNavigationTarget::Directory(target)) => {
+                *self.path_draft.borrow_mut() = target.display().to_string();
+                self.pending_reveal_path.borrow_mut().take();
+
+                if target == current_dir {
+                    self.refresh(window, file_model);
+                } else {
+                    self.navigate_to_with_reveal(
+                        target,
+                        None,
+                        NavigationMode::PushCurrent,
+                        window,
+                        file_model,
+                    );
+                }
+            }
+            Ok(PathNavigationTarget::File { path, parent_dir }) => {
+                *self.path_draft.borrow_mut() = parent_dir.display().to_string();
+
+                if parent_dir == current_dir {
+                    self.selection_state
+                        .borrow_mut()
+                        .set_single_selection(Some(path.clone()));
+                    self.selection_state
+                        .borrow_mut()
+                        .ensure_selection_anchor(Some(path));
+                    self.pending_reveal_path.borrow_mut().take();
+                    self.apply_view(window, file_model);
+                } else {
+                    self.navigate_to_with_reveal(
+                        parent_dir,
+                        Some(path),
+                        NavigationMode::PushCurrent,
+                        window,
+                        file_model,
+                    );
+                }
+            }
+            Err(error) => {
+                *self.status_override.borrow_mut() = Some(error);
+                self.apply_view(window, file_model);
+            }
+        }
+    }
+
     pub fn move_focus_next(
         &self,
         extend: bool,
@@ -881,10 +949,22 @@ impl BrowserState {
         window: &AppWindow,
         file_model: &VecModel<FileEntry>,
     ) {
+        self.navigate_to_with_reveal(target, None, mode, window, file_model);
+    }
+
+    fn navigate_to_with_reveal(
+        &self,
+        target: PathBuf,
+        reveal_path: Option<PathBuf>,
+        mode: NavigationMode,
+        window: &AppWindow,
+        file_model: &VecModel<FileEntry>,
+    ) {
         let Some(request_target) = self.prepare_navigation_request(target, mode) else {
             return;
         };
 
+        *self.pending_reveal_path.borrow_mut() = reveal_path;
         self.request_directory_load(request_target, window, file_model);
     }
 
@@ -907,6 +987,7 @@ impl BrowserState {
         self.clear_status_override();
         self.cancel_rename_internal();
         self.selection_state.borrow_mut().clear_selection();
+        *self.path_draft.borrow_mut() = target.display().to_string();
         *self.current_dir.borrow_mut() = target.clone();
         Some(target)
     }
@@ -980,6 +1061,7 @@ impl BrowserState {
         window.set_status_text(derived.status_text);
         window.set_directory_load_pending(self.is_directory_load_pending());
         window.set_loading_path(SharedString::from(current_dir.display().to_string()));
+        window.set_path_draft(SharedString::from(self.path_draft.borrow().clone()));
         window.set_clipboard_text(SharedString::from(self.clipboard_text()));
         window.set_can_open_selection(derived.can_open_selection);
         window.set_can_rename_selection(derived.can_rename_selection);
@@ -1421,6 +1503,44 @@ impl BrowserState {
 
     fn clear_status_override(&self) {
         self.status_override.borrow_mut().take();
+    }
+
+    fn apply_pending_reveal_if_ready(&self) {
+        let pending = self.pending_reveal_path.borrow().clone();
+        let Some(path) = pending else {
+            return;
+        };
+
+        let current_dir = self.current_dir.borrow().clone();
+        let Some(parent_dir) = path.parent().map(Path::to_path_buf) else {
+            self.pending_reveal_path.borrow_mut().take();
+            return;
+        };
+
+        if parent_dir != current_dir {
+            return;
+        }
+
+        let exists = self
+            .loaded_entries
+            .borrow()
+            .iter()
+            .any(|entry| entry.path == path);
+        if exists {
+            self.selection_state
+                .borrow_mut()
+                .set_single_selection(Some(path.clone()));
+            self.selection_state
+                .borrow_mut()
+                .ensure_selection_anchor(Some(path));
+        } else {
+            *self.status_override.borrow_mut() = Some(format!(
+                "Target is no longer available: {}",
+                item_name(&path)
+            ));
+        }
+
+        self.pending_reveal_path.borrow_mut().take();
     }
 
     fn breadcrumb_target(&self, index: i32) -> Option<PathBuf> {
@@ -2266,6 +2386,52 @@ mod tests {
             state.selection_state.borrow().selected_paths(),
             [PathBuf::from("/workspace/alpha.txt")]
         );
+    }
+
+    #[test]
+    fn browser_state_successful_directory_load_reveals_pending_file() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        let generation = state.begin_directory_load_request(PathBuf::from("/workspace/docs"));
+        *state.current_dir.borrow_mut() = PathBuf::from("/workspace/docs");
+        *state.pending_reveal_path.borrow_mut() = Some(PathBuf::from("/workspace/docs/report.txt"));
+
+        let result = DirectoryLoadResult {
+            generation,
+            target_path: PathBuf::from("/workspace/docs"),
+            outcome: Ok(vec![directory_entry(
+                "/workspace/docs/report.txt",
+                false,
+                10,
+            )]),
+        };
+
+        assert_eq!(
+            state.apply_directory_load_result_state(result),
+            LoadResultAction::ApplySuccess
+        );
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
+            Some(PathBuf::from("/workspace/docs/report.txt"))
+        );
+        assert_eq!(state.pending_reveal_path.borrow().clone(), None);
+    }
+
+    #[test]
+    fn browser_state_prepare_navigation_request_updates_path_draft() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        let request = state.prepare_navigation_request(
+            PathBuf::from("/workspace/docs"),
+            NavigationMode::PushCurrent,
+        );
+
+        assert_eq!(request, Some(PathBuf::from("/workspace/docs")));
+        assert_eq!(state.path_draft.borrow().as_str(), "/workspace/docs");
     }
 
     #[test]

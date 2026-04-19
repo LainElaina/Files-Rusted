@@ -90,6 +90,46 @@ pub(super) fn load_directory_entries(path: &Path) -> Result<Vec<DirectoryEntry>,
     Ok(entries)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum PathNavigationTarget {
+    Directory(PathBuf),
+    File { path: PathBuf, parent_dir: PathBuf },
+}
+
+pub(super) fn resolve_navigation_target(
+    input: &str,
+    current_dir: &Path,
+) -> Result<PathNavigationTarget, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("Path cannot be empty".to_string());
+    }
+
+    let raw_path = PathBuf::from(trimmed);
+    let resolved = if raw_path.is_absolute() {
+        raw_path
+    } else {
+        current_dir.join(raw_path)
+    };
+
+    if resolved.is_dir() {
+        return Ok(PathNavigationTarget::Directory(resolved));
+    }
+
+    if resolved.is_file() {
+        let Some(parent_dir) = resolved.parent().map(Path::to_path_buf) else {
+            return Err("Cannot navigate to a file without a parent directory".to_string());
+        };
+
+        return Ok(PathNavigationTarget::File {
+            path: resolved,
+            parent_dir,
+        });
+    }
+
+    Err(format!("Path not found: {}", trimmed))
+}
+
 pub(super) fn current_sidebar_index(sidebar_paths: &[PathBuf], current_dir: &Path) -> i32 {
     sidebar_paths
         .iter()
@@ -246,6 +286,49 @@ mod tests {
 
         assert_eq!(names, vec!["nested".to_string(), "root.txt".to_string()]);
 
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_navigation_target_resolves_relative_directory_against_current_dir() {
+        let dir = test_dir("resolve-dir");
+        let docs = dir.join("docs");
+        fs::create_dir_all(&docs).unwrap();
+
+        let target = resolve_navigation_target("docs", &dir).unwrap();
+
+        assert_eq!(target, PathNavigationTarget::Directory(docs));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_navigation_target_resolves_relative_file_against_current_dir() {
+        let dir = test_dir("resolve-file");
+        let docs = dir.join("docs");
+        let file = docs.join("report.txt");
+        fs::create_dir_all(&docs).unwrap();
+        fs::write(&file, "report").unwrap();
+
+        let target = resolve_navigation_target("docs/report.txt", &dir).unwrap();
+
+        assert_eq!(
+            target,
+            PathNavigationTarget::File {
+                path: file,
+                parent_dir: docs,
+            }
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_navigation_target_reports_missing_paths() {
+        let dir = test_dir("resolve-missing");
+        fs::create_dir_all(&dir).unwrap();
+
+        let error = resolve_navigation_target("missing-path", &dir).unwrap_err();
+
+        assert_eq!(error, "Path not found: missing-path");
         fs::remove_dir_all(&dir).unwrap();
     }
 

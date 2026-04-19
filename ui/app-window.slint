@@ -270,6 +270,7 @@ export component AppWindow inherits Window {
     in-out property<bool> directory-load-pending: false;
     in-out property<string> loading-path: "";
     in-out property<string> current-path: "/";
+    in-out property<string> path-draft: "/";
     in-out property<string> status-text: "Ready";
     in-out property<int> item-count: 0;
     in-out property<int> total-item-count: 0;
@@ -312,6 +313,8 @@ export component AppWindow inherits Window {
     callback rename-draft-updated(string);
     callback commit-rename();
     callback cancel-rename();
+    callback path-draft-updated(string);
+    callback submit-path-navigation();
     callback delete-selected();
     callback navigate-back();
     callback navigate-forward();
@@ -402,6 +405,10 @@ export component AppWindow inherits Window {
             } else if (event.text == Key.F2) {
                 root.request-rename();
                 accept
+            } else if (event.modifiers.control && (event.text == "l" || event.text == "L")) {
+                path-input.focus();
+                path-input.select-all();
+                accept
             } else if (event.modifiers.control && (event.text == "a" || event.text == "A")) {
                 root.select-all();
                 accept
@@ -424,99 +431,136 @@ export component AppWindow inherits Window {
         x: 0;
         y: 0;
         width: parent.width;
-        height: 42px;
+        height: 78px;
         background: #fafafa;
         border-width: 0px;
 
-        HorizontalBox {
+        VerticalBox {
             padding-left: 10px;
             padding-right: 10px;
             padding-top: 7px;
             padding-bottom: 7px;
             spacing: 6px;
 
-            NavButton {
-                enabled: root.can-navigate-back;
-                text: "←";
-                clicked => {
-                    root.navigate-back();
+            HorizontalBox {
+                spacing: 6px;
+
+                NavButton {
+                    enabled: root.can-navigate-back;
+                    text: "←";
+                    clicked => {
+                        root.navigate-back();
+                    }
                 }
-            }
 
-            NavButton {
-                enabled: root.can-navigate-forward;
-                text: "→";
-                clicked => {
-                    root.navigate-forward();
+                NavButton {
+                    enabled: root.can-navigate-forward;
+                    text: "→";
+                    clicked => {
+                        root.navigate-forward();
+                    }
                 }
-            }
 
-            NavButton {
-                text: "⌂";
-                clicked => {
-                    root.navigate-home();
+                NavButton {
+                    text: "⌂";
+                    clicked => {
+                        root.navigate-home();
+                    }
                 }
-            }
 
-            NavButton {
-                text: "↑";
-                clicked => {
-                    root.navigate-up();
+                NavButton {
+                    text: "↑";
+                    clicked => {
+                        root.navigate-up();
+                    }
                 }
-            }
 
-            NavButton {
-                text: "⟳";
-                clicked => {
-                    root.refresh-directory();
+                NavButton {
+                    text: "⟳";
+                    clicked => {
+                        root.refresh-directory();
+                    }
                 }
-            }
 
-            Rectangle {
-                horizontal-stretch: 1;
-                min-width: 120px;
-                border-radius: 8px;
-                border-width: 1px;
-                border-color: #d5dbe4;
-                background: #ffffff;
-                clip: true;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: 120px;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #d5dbe4;
+                    background: #ffffff;
+                    clip: true;
 
-                HorizontalBox {
-                    padding-left: 8px;
-                    padding-right: 8px;
-                    padding-top: 3px;
-                    padding-bottom: 3px;
-                    spacing: 2px;
-
-                    for crumb[i] in root.breadcrumb-items : HorizontalBox {
+                    HorizontalBox {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        padding-top: 3px;
+                        padding-bottom: 3px;
                         spacing: 2px;
-                        min-width: 0px;
 
-                        if i > 0 : Text {
-                            text: ">";
-                            color: #9aa4b2;
-                            font-size: 12px;
-                            vertical-alignment: center;
-                        }
+                        for crumb[i] in root.breadcrumb-items : HorizontalBox {
+                            spacing: 2px;
+                            min-width: 0px;
 
-                        BreadcrumbChip {
-                            label: crumb.label;
-                            activated => {
-                                root.activate-breadcrumb(i);
+                            if i > 0 : Text {
+                                text: ">";
+                                color: #9aa4b2;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+
+                            BreadcrumbChip {
+                                label: crumb.label;
+                                activated => {
+                                    root.activate-breadcrumb(i);
+                                }
                             }
                         }
                     }
                 }
+
+                LineEdit {
+                    min-width: 220px;
+                    max-width: 260px;
+                    text <=> root.filter-text;
+                    placeholder-text: root.directory-load-pending ? "Loading current folder..." : "Search current folder";
+                    enabled: !root.directory-load-pending;
+                    edited(value) => {
+                        root.filter-updated(value);
+                    }
+                }
             }
 
-            LineEdit {
-                min-width: 220px;
-                max-width: 260px;
-                text <=> root.filter-text;
-                placeholder-text: root.directory-load-pending ? "Loading current folder..." : "Search current folder";
-                enabled: !root.directory-load-pending;
-                edited(value) => {
-                    root.filter-updated(value);
+            HorizontalBox {
+                spacing: 6px;
+
+                Text {
+                    text: "Path";
+                    width: 34px;
+                    color: #64748b;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                path-input := LineEdit {
+                    horizontal-stretch: 1;
+                    text <=> root.path-draft;
+                    placeholder-text: "Enter a path and press Enter";
+                    edited(value) => {
+                        root.path-draft-updated(value);
+                    }
+                    accepted(value) => {
+                        root.path-draft-updated(value);
+                        root.submit-path-navigation();
+                    }
+                }
+
+                InlineButton {
+                    text: "Go";
+                    clicked => {
+                        root.submit-path-navigation();
+                    }
                 }
             }
         }
