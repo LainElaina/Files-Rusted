@@ -537,6 +537,17 @@ fn main() -> Result<(), slint::PlatformError> {
         let window_weak = window.as_weak();
         let state = state.clone();
         let file_model = file_model.clone();
+        window.on_cycle_sort_column(move |column| {
+            if let Some(window) = window_weak.upgrade() {
+                state.cycle_sort_column(column, &window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
         window.on_filter_updated(move |query| {
             if let Some(window) = window_weak.upgrade() {
                 state.set_filter_query(query.to_string(), &window, file_model.as_ref());

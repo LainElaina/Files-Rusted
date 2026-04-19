@@ -747,6 +747,17 @@ impl BrowserState {
         self.apply_view(window, file_model);
     }
 
+    pub fn cycle_sort_column(
+        &self,
+        column: i32,
+        window: &AppWindow,
+        file_model: &VecModel<FileEntry>,
+    ) {
+        let next = self.sort_mode.borrow().cycle_for_column(column);
+
+        self.set_sort_mode(next.index(), window, file_model);
+    }
+
     pub fn toggle_show_hidden(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         let next = !*self.show_hidden.borrow();
         *self.show_hidden.borrow_mut() = next;
@@ -1686,7 +1697,7 @@ impl DirectoryEntry {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SortMode {
     NameAsc,
     NameDesc,
@@ -1758,6 +1769,21 @@ impl SortMode {
             Self::SizeDesc => "Size Large-Small",
             Self::ModifiedNewest => "Modified Newest",
             Self::ModifiedOldest => "Modified Oldest",
+        }
+    }
+
+    fn cycle_for_column(self, column: i32) -> Self {
+        match (column, self) {
+            (0, Self::NameAsc) => Self::NameDesc,
+            (0, Self::NameDesc) => Self::NameAsc,
+            (0, _) => Self::NameAsc,
+            (1, Self::SizeDesc) => Self::SizeAsc,
+            (1, Self::SizeAsc) => Self::SizeDesc,
+            (1, _) => Self::SizeDesc,
+            (2, Self::ModifiedNewest) => Self::ModifiedOldest,
+            (2, Self::ModifiedOldest) => Self::ModifiedNewest,
+            (2, _) => Self::ModifiedNewest,
+            _ => self,
         }
     }
 
@@ -2038,6 +2064,21 @@ mod tests {
         assert_eq!(
             view.empty_state_title.as_str(),
             "Only hidden items are in this folder"
+        );
+    }
+
+    #[test]
+    fn sort_mode_cycles_by_column() {
+        assert_eq!(SortMode::NameAsc.cycle_for_column(0), SortMode::NameDesc);
+        assert_eq!(SortMode::NameDesc.cycle_for_column(0), SortMode::NameAsc);
+        assert_eq!(SortMode::SizeDesc.cycle_for_column(1), SortMode::SizeAsc);
+        assert_eq!(
+            SortMode::ModifiedNewest.cycle_for_column(2),
+            SortMode::ModifiedOldest
+        );
+        assert_eq!(
+            SortMode::NameAsc.cycle_for_column(2),
+            SortMode::ModifiedNewest
         );
     }
 

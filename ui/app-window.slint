@@ -125,6 +125,38 @@ component SidebarRow inherits Rectangle {
     }
 }
 
+component SortHeader inherits Rectangle {
+    in property<string> label;
+    in property<bool> fill: false;
+    in property<length> column-width: 120px;
+    in property<bool> align-right: false;
+    callback activated;
+
+    height: 24px;
+    width: fill ? 0px : self.column-width;
+    horizontal-stretch: fill ? 1 : 0;
+    border-radius: 4px;
+    background: sort-touch.has-hover ? #f1f5f9 : transparent;
+
+    Text {
+        x: 6px;
+        y: 3px;
+        width: parent.width - 12px;
+        text: label;
+        color: #6b7280;
+        font-size: 12px;
+        font-weight: 600;
+        horizontal-alignment: align-right ? right : left;
+        vertical-alignment: center;
+    }
+
+    sort-touch := TouchArea {
+        clicked => {
+            root.activated();
+        }
+    }
+}
+
 component FileRow inherits Rectangle {
     in property<FileEntry> entry;
     in property<length> type-column-width: 112px;
@@ -379,6 +411,7 @@ export component AppWindow inherits Window {
     callback drag-autoscroll-tick();
     callback drag-scroll-applied(float);
     callback sort-mode-selected(int);
+    callback cycle-sort-column(int);
     callback filter-updated(string);
     callback process-directory-load-results();
     callback escape-pressed();
@@ -872,13 +905,12 @@ export component AppWindow inherits Window {
                             background: transparent;
                         }
 
-                        Text {
-                            text: "Name";
-                            horizontal-stretch: 1;
-                            color: #6b7280;
-                            font-size: 12px;
-                            font-weight: 600;
-                            vertical-alignment: center;
+                        SortHeader {
+                            fill: true;
+                            label: root.current-sort-index == 0 ? "Name ▲" : (root.current-sort-index == 1 ? "Name ▼" : "Name");
+                            activated => {
+                                root.cycle-sort-column(0);
+                            }
                         }
 
                         Text {
@@ -890,24 +922,22 @@ export component AppWindow inherits Window {
                             vertical-alignment: center;
                         }
 
-                        Text {
-                            text: "Size";
-                            width: root.size-column-width;
-                            color: #6b7280;
-                            font-size: 12px;
-                            font-weight: 600;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
+                        SortHeader {
+                            column-width: root.size-column-width;
+                            align-right: true;
+                            label: root.current-sort-index == 2 ? "Size ▲" : (root.current-sort-index == 3 ? "Size ▼" : "Size");
+                            activated => {
+                                root.cycle-sort-column(1);
+                            }
                         }
 
-                        Text {
-                            text: "Modified";
-                            width: root.modified-column-width;
-                            color: #6b7280;
-                            font-size: 12px;
-                            font-weight: 600;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
+                        SortHeader {
+                            column-width: root.modified-column-width;
+                            align-right: true;
+                            label: root.current-sort-index == 4 ? "Modified ▼" : (root.current-sort-index == 5 ? "Modified ▲" : "Modified");
+                            activated => {
+                                root.cycle-sort-column(2);
+                            }
                         }
                     }
 
