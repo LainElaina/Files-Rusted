@@ -642,6 +642,36 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                InlineButton {
+                    text: "Open";
+                    enabled: root.can-open-selection;
+                    clicked => {
+                        root.open-selected();
+                    }
+                }
+
+                InlineButton {
+                    text: "New File";
+                    clicked => {
+                        root.create-file();
+                    }
+                }
+
+                InlineButton {
+                    text: "New Folder";
+                    clicked => {
+                        root.create-folder();
+                    }
+                }
+
+                InlineButton {
+                    text: "Paste";
+                    enabled: root.can-paste;
+                    clicked => {
+                        root.paste-into-current-directory();
+                    }
+                }
+
                 Text {
                     text: "Sort";
                     width: 28px;
