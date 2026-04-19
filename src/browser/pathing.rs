@@ -9,10 +9,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 #[cfg(test)]
-use std::{
-    fs,
-    time::SystemTime,
-};
+use std::{fs, time::SystemTime};
 
 pub(super) fn build_sidebar_entries(
     start_dir: &Path,
@@ -79,6 +76,7 @@ pub(super) fn load_directory_entries(path: &Path) -> Result<Vec<DirectoryEntry>,
             }
 
             let is_dir = metadata.is_dir();
+            let is_hidden = hidden_file_flag(&name, &metadata);
             let size_bytes = if is_dir { 0 } else { metadata.len() };
             let modified_timestamp = metadata
                 .modified()
@@ -102,6 +100,7 @@ pub(super) fn load_directory_entries(path: &Path) -> Result<Vec<DirectoryEntry>,
                 path,
                 name,
                 is_dir,
+                is_hidden,
                 size_bytes,
                 modified_label: modified_timestamp
                     .map(format_modified_timestamp)
@@ -277,6 +276,20 @@ fn format_modified_timestamp(timestamp: u64) -> String {
     datetime.format("%Y-%m-%d %H:%M").to_string()
 }
 
+#[cfg(target_os = "windows")]
+fn hidden_file_flag(name: &str, metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+
+    name.starts_with('.') || metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hidden_file_flag(name: &str, _metadata: &std::fs::Metadata) -> bool {
+    name.starts_with('.')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,6 +346,20 @@ mod tests {
         names.sort();
 
         assert_eq!(names, vec!["nested".to_string(), "root.txt".to_string()]);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn hidden_file_flag_marks_dotfiles_as_hidden() {
+        let dir = test_dir("hidden-dotfile");
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(".secret.txt");
+        fs::write(&file, "secret").unwrap();
+
+        let metadata = fs::metadata(&file).unwrap();
+
+        assert!(hidden_file_flag(".secret.txt", &metadata));
 
         fs::remove_dir_all(&dir).unwrap();
     }

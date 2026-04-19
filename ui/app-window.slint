@@ -314,8 +314,11 @@ export component AppWindow inherits Window {
     in-out property<bool> rename-mode: false;
     in-out property<string> clipboard-text: "Clipboard: empty";
     in-out property<string> filter-text: "";
+    in-out property<bool> show-hidden-files: false;
     in-out property<string> rename-draft: "";
     in-out property<string> selection-text: "No file selected";
+    in-out property<string> empty-state-title: "This folder is empty";
+    in-out property<string> empty-state-detail: "Use the context menu or shortcuts to create items.";
     in-out property<bool> drag-selection-active: false;
     in-out property<float> drag-selection-x: 0;
     in-out property<float> drag-selection-y: 0;
@@ -339,6 +342,7 @@ export component AppWindow inherits Window {
     callback open-selected();
     callback request-rename();
     callback toggle-current-favorite();
+    callback toggle-show-hidden-files();
     callback rename-draft-updated(string);
     callback commit-rename();
     callback cancel-rename();
@@ -436,6 +440,9 @@ export component AppWindow inherits Window {
                 accept
             } else if (event.modifiers.control && (event.text == "d" || event.text == "D")) {
                 root.toggle-current-favorite();
+                accept
+            } else if (event.modifiers.control && (event.text == "h" || event.text == "H")) {
+                root.toggle-show-hidden-files();
                 accept
             } else if (event.modifiers.control && (event.text == "l" || event.text == "L")) {
                 path-input.focus();
@@ -617,6 +624,14 @@ export component AppWindow inherits Window {
                     current-index <=> root.current-sort-index;
                     selected => {
                         root.sort-mode-selected(root.current-sort-index);
+                    }
+                }
+
+                CheckBox {
+                    text: "Hidden";
+                    checked: root.show-hidden-files;
+                    toggled => {
+                        root.toggle-show-hidden-files();
                     }
                 }
             }
@@ -914,7 +929,7 @@ export component AppWindow inherits Window {
                         spacing: 8px;
 
                         Text {
-                            text: root.total-item-count == 0 ? "This folder is empty" : "No items match the current search";
+                            text: root.empty-state-title;
                             color: #1f2937;
                             font-size: 18px;
                             font-weight: 700;
@@ -922,7 +937,7 @@ export component AppWindow inherits Window {
                         }
 
                         Text {
-                            text: root.total-item-count == 0 ? "Use the context menu or shortcuts to create items." : "Adjust the search text to see more items.";
+                            text: root.empty-state-detail;
                             color: #6b7280;
                             font-size: 13px;
                             horizontal-alignment: center;

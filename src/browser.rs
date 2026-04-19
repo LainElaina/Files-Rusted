@@ -21,6 +21,8 @@ mod file_ops;
 mod pathing;
 #[path = "browser/selection.rs"]
 mod selection;
+#[path = "browser/settings.rs"]
+mod settings;
 #[path = "browser/view.rs"]
 mod view;
 
@@ -42,6 +44,7 @@ use pathing::{
     PathNavigationTarget,
 };
 use selection::{normalize_operation_paths, SelectionState};
+use settings::{load_browser_settings, save_browser_settings, BrowserSettings};
 
 pub struct BrowserState {
     current_dir: RefCell<PathBuf>,
@@ -55,6 +58,7 @@ pub struct BrowserState {
     drag_pointer: RefCell<Option<DragPoint>>,
     selection_state: RefCell<SelectionState>,
     sort_mode: RefCell<SortMode>,
+    show_hidden: RefCell<bool>,
     filter_query: RefCell<String>,
     path_draft: RefCell<String>,
     favorite_paths: RefCell<Vec<PathBuf>>,
@@ -76,6 +80,7 @@ pub struct BrowserState {
 impl BrowserState {
     pub fn new(start_dir: PathBuf) -> (Self, Vec<SidebarEntry>) {
         let favorite_paths = load_favorite_paths();
+        let settings = load_browser_settings();
         let (sidebar_entries, sidebar_paths) = build_sidebar_entries(&start_dir, &favorite_paths);
         let start_dir_label = start_dir.display().to_string();
         (
@@ -90,7 +95,8 @@ impl BrowserState {
                 pending_drag_autoscroll: RefCell::new(0.0),
                 drag_pointer: RefCell::new(None),
                 selection_state: RefCell::new(SelectionState::default()),
-                sort_mode: RefCell::new(SortMode::NameAsc),
+                sort_mode: RefCell::new(SortMode::from_storage_key(&settings.sort_mode_key)),
+                show_hidden: RefCell::new(settings.show_hidden),
                 filter_query: RefCell::new(String::new()),
                 path_draft: RefCell::new(start_dir_label),
                 favorite_paths: RefCell::new(favorite_paths),
@@ -733,7 +739,32 @@ impl BrowserState {
     }
 
     pub fn set_sort_mode(&self, index: i32, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        self.clear_status_override();
         *self.sort_mode.borrow_mut() = SortMode::from_index(index);
+        if let Err(error) = self.persist_browser_settings() {
+            *self.status_override.borrow_mut() = Some(format!("Failed to save settings: {error}"));
+        }
+        self.apply_view(window, file_model);
+    }
+
+    pub fn toggle_show_hidden(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        let next = !*self.show_hidden.borrow();
+        *self.show_hidden.borrow_mut() = next;
+
+        match self.persist_browser_settings() {
+            Ok(()) => {
+                *self.status_override.borrow_mut() = Some(if next {
+                    "Hidden files are now visible".to_string()
+                } else {
+                    "Hidden files are now hidden".to_string()
+                });
+            }
+            Err(error) => {
+                *self.status_override.borrow_mut() =
+                    Some(format!("Failed to save settings: {error}"));
+            }
+        }
+
         self.apply_view(window, file_model);
     }
 
@@ -1031,6 +1062,7 @@ impl BrowserState {
     fn derived_view_for_apply(&self) -> view::BrowserViewData {
         let filter_query = self.filter_query.borrow().clone();
         let sort_mode = *self.sort_mode.borrow();
+        let show_hidden = *self.show_hidden.borrow();
         let rename_mode = *self.rename_mode.borrow();
         let rename_draft = self.rename_draft.borrow().clone();
 
@@ -1053,6 +1085,7 @@ impl BrowserState {
                 &loaded_entries,
                 sort_mode,
                 &filter_query,
+                show_hidden,
                 &selection_state,
                 rename_mode,
                 &rename_draft,
@@ -1080,6 +1113,7 @@ impl BrowserState {
         let current_dir = self.current_dir.borrow().clone();
         let filter_query = self.filter_query.borrow().clone();
         let sort_mode = *self.sort_mode.borrow();
+        let show_hidden = *self.show_hidden.borrow();
 
         let derived = self.apply_view_to_state_and_model(file_model);
 
@@ -1102,6 +1136,8 @@ impl BrowserState {
         window.set_selected_file_index(derived.focused_index);
         window.set_selection_text(derived.selection_text);
         window.set_status_text(derived.status_text);
+        window.set_empty_state_title(derived.empty_state_title);
+        window.set_empty_state_detail(derived.empty_state_detail);
         window.set_directory_load_pending(self.is_directory_load_pending());
         window.set_loading_path(SharedString::from(current_dir.display().to_string()));
         window.set_path_draft(SharedString::from(self.path_draft.borrow().clone()));
@@ -1132,6 +1168,7 @@ impl BrowserState {
         ));
         window.set_filter_text(SharedString::from(filter_query));
         window.set_current_sort_index(sort_mode.index());
+        window.set_show_hidden_files(show_hidden);
         window.set_can_navigate_back(can_navigate_back);
         window.set_can_navigate_forward(can_navigate_forward);
     }
@@ -1596,6 +1633,14 @@ impl BrowserState {
         self.pending_reveal_path.borrow_mut().take();
     }
 
+    fn persist_browser_settings(&self) -> std::io::Result<()> {
+        let settings = BrowserSettings {
+            sort_mode_key: self.sort_mode.borrow().storage_key().to_string(),
+            show_hidden: *self.show_hidden.borrow(),
+        };
+        save_browser_settings(&settings)
+    }
+
     fn breadcrumb_target(&self, index: i32) -> Option<PathBuf> {
         let index = index.max(0) as usize;
         let breadcrumb_paths = self.breadcrumb_paths.borrow();
@@ -1620,6 +1665,7 @@ struct DirectoryEntry {
     path_label: String,
     kind_label: String,
     is_dir: bool,
+    is_hidden: bool,
     size_bytes: u64,
     size_label: String,
     modified_timestamp: Option<u64>,
@@ -1671,6 +1717,17 @@ impl SortMode {
         }
     }
 
+    fn from_storage_key(key: &str) -> Self {
+        match key {
+            "name-desc" => Self::NameDesc,
+            "size-asc" => Self::SizeAsc,
+            "size-desc" => Self::SizeDesc,
+            "modified-newest" => Self::ModifiedNewest,
+            "modified-oldest" => Self::ModifiedOldest,
+            _ => Self::NameAsc,
+        }
+    }
+
     fn index(self) -> i32 {
         match self {
             Self::NameAsc => 0,
@@ -1679,6 +1736,17 @@ impl SortMode {
             Self::SizeDesc => 3,
             Self::ModifiedNewest => 4,
             Self::ModifiedOldest => 5,
+        }
+    }
+
+    fn storage_key(self) -> &'static str {
+        match self {
+            Self::NameAsc => "name-asc",
+            Self::NameDesc => "name-desc",
+            Self::SizeAsc => "size-asc",
+            Self::SizeDesc => "size-desc",
+            Self::ModifiedNewest => "modified-newest",
+            Self::ModifiedOldest => "modified-oldest",
         }
     }
 
@@ -1770,8 +1838,15 @@ mod tests {
         let mut selection = SelectionState::default();
         selection.set_focus_only(Some(PathBuf::from("/workspace/alpha.txt")));
 
-        let view =
-            view::build_browser_view(&entries, SortMode::NameAsc, "txt", &selection, false, "");
+        let view = view::build_browser_view(
+            &entries,
+            SortMode::NameAsc,
+            "txt",
+            true,
+            &selection,
+            false,
+            "",
+        );
 
         assert_eq!(
             view.visible_paths,
@@ -1809,8 +1884,15 @@ mod tests {
         let mut selection = SelectionState::default();
         selection.set_single_selection(Some(PathBuf::from("/workspace/zeta.txt")));
 
-        let view =
-            view::build_browser_view(&entries, SortMode::NameAsc, "alp", &selection, false, "");
+        let view = view::build_browser_view(
+            &entries,
+            SortMode::NameAsc,
+            "alp",
+            true,
+            &selection,
+            false,
+            "",
+        );
 
         assert_eq!(
             view.visible_paths,
@@ -1838,13 +1920,14 @@ mod tests {
             path_label: "/workspace/notes.txt".to_string(),
             kind_label: "File".to_string(),
             is_dir: false,
+            is_hidden: false,
             size_bytes: 12,
             size_label: "12 B".to_string(),
             modified_timestamp: Some(10),
             modified_label: "2026-04-19 08:00".to_string(),
         };
 
-        let text = view::build_status_text(0, 3, "abc", Some(&entry), false, 1, 1);
+        let text = view::build_status_text(0, 3, 0, "abc", Some(&entry), false, None, 1, 1, true);
 
         assert_eq!(text.as_str(), "notes.txt is hidden by the current filter");
     }
@@ -1861,6 +1944,7 @@ mod tests {
             &entries,
             SortMode::ModifiedNewest,
             "",
+            true,
             &SelectionState::default(),
             false,
             "",
@@ -1888,6 +1972,7 @@ mod tests {
             &entries,
             SortMode::ModifiedOldest,
             "",
+            true,
             &SelectionState::default(),
             false,
             "",
@@ -1899,6 +1984,60 @@ mod tests {
                 PathBuf::from("/workspace/older.txt"),
                 PathBuf::from("/workspace/newer.txt"),
             ]
+        );
+    }
+
+    #[test]
+    fn build_browser_view_hides_hidden_entries_when_show_hidden_is_disabled() {
+        let entries = vec![
+            directory_entry("/workspace/.secret.txt", false, 20),
+            directory_entry("/workspace/visible.txt", false, 10),
+        ];
+
+        let view = view::build_browser_view(
+            &entries,
+            SortMode::NameAsc,
+            "",
+            false,
+            &SelectionState::default(),
+            false,
+            "",
+        );
+
+        assert_eq!(
+            view.visible_paths,
+            vec![PathBuf::from("/workspace/visible.txt")]
+        );
+        assert_eq!(view.status_text.as_str(), "1 item(s) loaded (1 hidden)");
+    }
+
+    #[test]
+    fn build_browser_view_reports_hidden_file_toggle_in_selection_status() {
+        let entries = vec![directory_entry("/workspace/.secret.txt", false, 20)];
+        let mut selection = SelectionState::default();
+        selection.set_single_selection(Some(PathBuf::from("/workspace/.secret.txt")));
+
+        let view = view::build_browser_view(
+            &entries,
+            SortMode::NameAsc,
+            "",
+            false,
+            &selection,
+            false,
+            "",
+        );
+
+        assert_eq!(
+            view.selection_text.as_str(),
+            "Selected file: .secret.txt (hidden because hidden files are off)"
+        );
+        assert_eq!(
+            view.status_text.as_str(),
+            ".secret.txt is hidden because hidden files are off"
+        );
+        assert_eq!(
+            view.empty_state_title.as_str(),
+            "Only hidden items are in this folder"
         );
     }
 
@@ -2857,6 +2996,7 @@ mod tests {
                 "File".to_string()
             },
             is_dir,
+            is_hidden: name.starts_with('.'),
             size_bytes,
             size_label: format!("{} B", size_bytes),
             modified_timestamp: Some(size_bytes),
