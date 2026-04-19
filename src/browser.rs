@@ -13,6 +13,8 @@ use crate::{AppWindow, FileEntry, SidebarEntry};
 mod background_loader;
 #[path = "browser/drag_selection.rs"]
 mod drag_selection;
+#[path = "browser/favorites.rs"]
+mod favorites;
 #[path = "browser/file_ops.rs"]
 mod file_ops;
 #[path = "browser/pathing.rs"]
@@ -30,6 +32,7 @@ use drag_selection::{
     compute_drag_autoscroll_delta, DragPoint, DragRect, DragScrollViewport, DragSelectionSession,
     DragSelectionSnapshot, VisibleItemLayout,
 };
+use favorites::{load_favorite_paths, save_favorite_paths};
 use file_ops::{
     copy_path, destination_for_transfer, format_item_count, item_name, launch_path, move_path,
     unique_child_path,
@@ -54,7 +57,8 @@ pub struct BrowserState {
     sort_mode: RefCell<SortMode>,
     filter_query: RefCell<String>,
     path_draft: RefCell<String>,
-    sidebar_paths: Vec<PathBuf>,
+    favorite_paths: RefCell<Vec<PathBuf>>,
+    sidebar_paths: RefCell<Vec<PathBuf>>,
     breadcrumb_paths: RefCell<Vec<PathBuf>>,
     back_history: RefCell<Vec<PathBuf>>,
     forward_history: RefCell<Vec<PathBuf>>,
@@ -71,7 +75,8 @@ pub struct BrowserState {
 
 impl BrowserState {
     pub fn new(start_dir: PathBuf) -> (Self, Vec<SidebarEntry>) {
-        let (sidebar_entries, sidebar_paths) = build_sidebar_entries(&start_dir);
+        let favorite_paths = load_favorite_paths();
+        let (sidebar_entries, sidebar_paths) = build_sidebar_entries(&start_dir, &favorite_paths);
         let start_dir_label = start_dir.display().to_string();
         (
             Self {
@@ -88,7 +93,8 @@ impl BrowserState {
                 sort_mode: RefCell::new(SortMode::NameAsc),
                 filter_query: RefCell::new(String::new()),
                 path_draft: RefCell::new(start_dir_label),
-                sidebar_paths,
+                favorite_paths: RefCell::new(favorite_paths),
+                sidebar_paths: RefCell::new(sidebar_paths),
                 breadcrumb_paths: RefCell::new(Vec::new()),
                 back_history: RefCell::new(Vec::new()),
                 forward_history: RefCell::new(Vec::new()),
@@ -233,7 +239,7 @@ impl BrowserState {
     }
 
     pub fn navigate_home(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
-        if let Some(target) = self.sidebar_paths.first().cloned() {
+        if let Some(target) = self.sidebar_paths.borrow().first().cloned() {
             self.navigate_to(target, NavigationMode::PushCurrent, window, file_model);
         }
     }
@@ -272,7 +278,7 @@ impl BrowserState {
         file_model: &VecModel<FileEntry>,
     ) {
         let index = index.max(0) as usize;
-        if let Some(target) = self.sidebar_paths.get(index).cloned() {
+        if let Some(target) = self.sidebar_paths.borrow().get(index).cloned() {
             self.navigate_to(target, NavigationMode::PushCurrent, window, file_model);
         }
     }
@@ -742,6 +748,36 @@ impl BrowserState {
         self.apply_view(window, file_model);
     }
 
+    pub fn toggle_current_favorite(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        let current_dir = self.current_dir.borrow().clone();
+        let current_dir_key = canonical_favorite_path(&current_dir);
+        let mut favorites = self.favorite_paths.borrow().clone();
+
+        let status = if let Some(index) = favorites.iter().position(|path| path == &current_dir_key)
+        {
+            favorites.remove(index);
+            save_favorite_paths(&favorites)
+                .map(|_| format!("Removed from favorites: {}", item_name(&current_dir)))
+        } else {
+            favorites.push(current_dir_key);
+            save_favorite_paths(&favorites)
+                .map(|_| format!("Added to favorites: {}", item_name(&current_dir)))
+        };
+
+        match status {
+            Ok(message) => {
+                *self.favorite_paths.borrow_mut() = favorites;
+                *self.status_override.borrow_mut() = Some(message);
+            }
+            Err(error) => {
+                *self.status_override.borrow_mut() =
+                    Some(format!("Failed to update favorites: {}", error));
+            }
+        }
+
+        self.apply_view(window, file_model);
+    }
+
     pub fn set_path_draft(&self, value: String) {
         *self.path_draft.borrow_mut() = value;
     }
@@ -1052,8 +1088,15 @@ impl BrowserState {
         let can_navigate_back = !self.back_history.borrow().is_empty();
         let can_navigate_forward = !self.forward_history.borrow().is_empty();
 
+        self.update_sidebar_items(window, &current_dir);
         self.update_breadcrumbs(window, &current_dir);
         window.set_current_path(SharedString::from(current_dir.display().to_string()));
+        window.set_current_directory_favorited(
+            self.favorite_paths
+                .borrow()
+                .iter()
+                .any(|path| path == &canonical_favorite_path(&current_dir)),
+        );
         window.set_item_count(derived.visible_count);
         window.set_total_item_count(derived.total_count);
         window.set_selected_file_index(derived.focused_index);
@@ -1083,7 +1126,10 @@ impl BrowserState {
             window.set_drag_selection_width(0.0);
             window.set_drag_selection_height(0.0);
         }
-        window.set_active_sidebar_index(current_sidebar_index(&self.sidebar_paths, &current_dir));
+        window.set_active_sidebar_index(current_sidebar_index(
+            &self.sidebar_paths.borrow(),
+            &current_dir,
+        ));
         window.set_filter_text(SharedString::from(filter_query));
         window.set_current_sort_index(sort_mode.index());
         window.set_can_navigate_back(can_navigate_back);
@@ -1336,6 +1382,13 @@ impl BrowserState {
         window.set_breadcrumb_items(ModelRc::from(Rc::new(VecModel::from(items))));
     }
 
+    fn update_sidebar_items(&self, window: &AppWindow, current_dir: &Path) {
+        let favorite_paths = self.favorite_paths.borrow().clone();
+        let (items, paths) = build_sidebar_entries(current_dir, &favorite_paths);
+        *self.sidebar_paths.borrow_mut() = paths;
+        window.set_sidebar_items(ModelRc::from(Rc::new(VecModel::from(items))));
+    }
+
     fn open_path(&self, path: PathBuf, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         self.clear_status_override();
         self.cancel_rename_internal();
@@ -1553,6 +1606,10 @@ impl BrowserState {
         let index = index.max(0) as usize;
         self.visible_paths.borrow().get(index).cloned()
     }
+}
+
+fn canonical_favorite_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[derive(Clone)]

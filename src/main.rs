@@ -103,6 +103,17 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
+        window.on_toggle_current_favorite(move || {
+            if let Some(window) = window_weak.upgrade() {
+                state.toggle_current_favorite(&window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
         let state = state.clone();
         window.on_rename_draft_updated(move |value| {
             state.set_rename_draft(value.to_string());

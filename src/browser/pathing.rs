@@ -12,7 +12,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub(super) fn build_sidebar_entries(start_dir: &Path) -> (Vec<SidebarEntry>, Vec<PathBuf>) {
+pub(super) fn build_sidebar_entries(
+    start_dir: &Path,
+    favorite_paths: &[PathBuf],
+) -> (Vec<SidebarEntry>, Vec<PathBuf>) {
     let mut entries = Vec::new();
     let mut paths = Vec::new();
 
@@ -27,6 +30,16 @@ pub(super) fn build_sidebar_entries(start_dir: &Path) -> (Vec<SidebarEntry>, Vec
         start_dir.to_path_buf(),
     );
     push_sidebar_entry(&mut entries, &mut paths, "Root", filesystem_root(start_dir));
+
+    for favorite in favorite_paths {
+        push_sidebar_entry_with_caption(
+            &mut entries,
+            &mut paths,
+            &favorite_label(favorite),
+            &short_path_label(favorite),
+            favorite.clone(),
+        );
+    }
 
     (entries, paths)
 }
@@ -158,15 +171,34 @@ fn push_sidebar_entry(
     label: &str,
     path: PathBuf,
 ) {
+    push_sidebar_entry_with_caption(entries, paths, label, &short_path_label(&path), path);
+}
+
+fn push_sidebar_entry_with_caption(
+    entries: &mut Vec<SidebarEntry>,
+    paths: &mut Vec<PathBuf>,
+    label: &str,
+    caption: &str,
+    path: PathBuf,
+) {
     if paths.iter().any(|existing| existing == &path) {
         return;
     }
 
     entries.push(SidebarEntry {
         label: SharedString::from(label),
-        caption: SharedString::from(short_path_label(&path)),
+        caption: SharedString::from(caption),
     });
     paths.push(path);
+}
+
+fn favorite_label(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| path.display().to_string());
+    format!("★ {name}")
 }
 
 fn breadcrumb_label(path: &Path) -> String {
@@ -287,6 +319,22 @@ mod tests {
         assert_eq!(names, vec!["nested".to_string(), "root.txt".to_string()]);
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn build_sidebar_entries_appends_favorites_after_default_locations() {
+        let start_dir = PathBuf::from("/workspace/project");
+        let favorites = vec![PathBuf::from("/workspace/project/docs")];
+
+        let (entries, paths) = build_sidebar_entries(&start_dir, &favorites);
+
+        assert!(entries.iter().any(|entry| entry.label.as_str() == "Home"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.label.as_str() == "Workspace"));
+        assert!(entries.iter().any(|entry| entry.label.as_str() == "Root"));
+        assert!(entries.iter().any(|entry| entry.label.as_str() == "★ docs"));
+        assert!(paths.contains(&PathBuf::from("/workspace/project/docs")));
     }
 
     #[test]

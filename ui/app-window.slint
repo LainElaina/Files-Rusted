@@ -65,7 +65,7 @@ component SidebarRow inherits Rectangle {
     in property<bool> selected: false;
     callback activated;
 
-    height: 32px;
+    height: 42px;
     border-radius: 7px;
     border-width: 0px;
     background: selected ? #e8f0fe : (sidebar-touch.has-hover ? #f4f7fb : transparent);
@@ -92,15 +92,28 @@ component SidebarRow inherits Rectangle {
             vertical-alignment: center;
         }
 
-        Text {
-            text: entry.label;
+        VerticalBox {
             horizontal-stretch: 1;
-            color: selected ? #1e3a5f : #334155;
-            font-size: 13px;
-            font-weight: selected ? 600 : 500;
-            wrap: no-wrap;
-            overflow: elide;
-            vertical-alignment: center;
+            spacing: 0px;
+
+            Text {
+                text: entry.label;
+                color: selected ? #1e3a5f : #334155;
+                font-size: 13px;
+                font-weight: selected ? 600 : 500;
+                wrap: no-wrap;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: entry.caption;
+                color: selected ? #4f77a3 : #94a3b8;
+                font-size: 11px;
+                wrap: no-wrap;
+                overflow: elide;
+                vertical-alignment: center;
+            }
         }
     }
 
@@ -270,6 +283,7 @@ export component AppWindow inherits Window {
     in-out property<bool> directory-load-pending: false;
     in-out property<string> loading-path: "";
     in-out property<string> current-path: "/";
+    in-out property<bool> current-directory-favorited: false;
     in-out property<string> path-draft: "/";
     in-out property<string> status-text: "Ready";
     in-out property<int> item-count: 0;
@@ -310,6 +324,7 @@ export component AppWindow inherits Window {
     callback create-folder();
     callback open-selected();
     callback request-rename();
+    callback toggle-current-favorite();
     callback rename-draft-updated(string);
     callback commit-rename();
     callback cancel-rename();
@@ -405,6 +420,9 @@ export component AppWindow inherits Window {
             } else if (event.text == Key.F2) {
                 root.request-rename();
                 accept
+            } else if (event.modifiers.control && (event.text == "d" || event.text == "D")) {
+                root.toggle-current-favorite();
+                accept
             } else if (event.modifiers.control && (event.text == "l" || event.text == "L")) {
                 path-input.focus();
                 path-input.select-all();
@@ -479,6 +497,13 @@ export component AppWindow inherits Window {
                     text: "⟳";
                     clicked => {
                         root.refresh-directory();
+                    }
+                }
+
+                InlineButton {
+                    text: root.current-directory-favorited ? "★" : "☆";
+                    clicked => {
+                        root.toggle-current-favorite();
                     }
                 }
 
