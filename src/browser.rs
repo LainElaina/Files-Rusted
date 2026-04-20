@@ -113,7 +113,7 @@ impl BrowserState {
         let start_dir_label = effective_start_dir.display().to_string();
         (
             Self {
-                workspace_dir: effective_start_dir.clone(),
+                workspace_dir: start_dir,
                 current_dir: RefCell::new(effective_start_dir.clone()),
                 loaded_entries: RefCell::new(Vec::new()),
                 visible_paths: RefCell::new(Vec::new()),

@@ -1,8 +1,8 @@
 mod browser;
 
 use browser::BrowserState;
-use slint::{ComponentHandle, ModelRc, VecModel};
-use std::{env, path::PathBuf, rc::Rc};
+use slint::{ComponentHandle, ModelRc, Timer, VecModel};
+use std::{env, path::PathBuf, rc::Rc, time::Duration};
 
 slint::include_modules!();
 
@@ -279,9 +279,14 @@ fn main() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         let file_model = file_model.clone();
         window.on_activate_sidebar(move |index| {
-            if let Some(window) = window_weak.upgrade() {
-                state.activate_sidebar(index, &window, file_model.as_ref());
-            }
+            let window_weak = window_weak.clone();
+            let state = state.clone();
+            let file_model = file_model.clone();
+            Timer::single_shot(Duration::default(), move || {
+                if let Some(window) = window_weak.upgrade() {
+                    state.activate_sidebar(index, &window, file_model.as_ref());
+                }
+            });
         });
     }
 
