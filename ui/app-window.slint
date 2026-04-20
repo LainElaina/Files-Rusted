@@ -121,12 +121,6 @@ component SidebarRow inherits Rectangle {
         }
     }
 
-    sidebar-touch := TouchArea {
-        clicked => {
-            root.activated();
-        }
-    }
-
     ContextMenuArea {
         Menu {
             MenuItem {
@@ -142,6 +136,15 @@ component SidebarRow inherits Rectangle {
                 activated => {
                     root.remove-requested();
                 }
+            }
+        }
+    }
+
+    sidebar-touch := TouchArea {
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down &&
+                (event.button == PointerEventButton.left || event.button == PointerEventButton.right)) {
+                root.activated();
             }
         }
     }
@@ -880,6 +883,14 @@ export component AppWindow inherits Window {
                     root.rename-draft-updated(value);
                     root.commit-rename();
                 }
+                key-pressed(event) => {
+                    if (event.text == Key.Escape) {
+                        root.cancel-rename();
+                        accept
+                    } else {
+                        reject
+                    }
+                }
             }
 
             InlineButton {
@@ -1218,6 +1229,112 @@ export component AppWindow inherits Window {
                                     root.update-drag-selection(self.mouse-x / 1px, self.mouse-y / 1px);
                                 } else if (event.kind == PointerEventKind.up) {
                                     root.request-workspace-clear-selection();
+                                }
+                            }
+                        }
+                    }
+
+                    ContextMenuArea {
+                        Menu {
+                            MenuItem {
+                                title: "Open";
+                                enabled: root.can-open-selection;
+                                activated => {
+                                    root.open-selected();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "Copy";
+                                enabled: root.can-transfer-selection;
+                                activated => {
+                                    root.request-copy();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "Duplicate";
+                                enabled: root.can-transfer-selection;
+                                activated => {
+                                    root.duplicate-selected();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "Cut";
+                                enabled: root.can-transfer-selection;
+                                activated => {
+                                    root.request-cut();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "Paste";
+                                enabled: root.can-paste;
+                                activated => {
+                                    root.paste-into-current-directory();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "Clear Clipboard";
+                                enabled: root.can-paste;
+                                activated => {
+                                    root.clear-pending-transfer();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "Rename";
+                                enabled: root.can-rename-selection && !root.directory-load-pending;
+                                activated => {
+                                    root.request-rename();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "Move to Trash";
+                                enabled: root.can-delete-selection;
+                                activated => {
+                                    root.delete-selected();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "Delete Permanently";
+                                enabled: root.can-delete-selection;
+                                activated => {
+                                    root.delete-selected-permanently();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "New File";
+                                enabled: !root.directory-load-pending && !root.rename-mode;
+                                activated => {
+                                    root.create-file();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "New Folder";
+                                enabled: !root.directory-load-pending && !root.rename-mode;
+                                activated => {
+                                    root.create-folder();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "Select All";
+                                activated => {
+                                    root.select-all();
+                                }
+                            }
+
+                            MenuItem {
+                                title: "Clear Selection";
+                                activated => {
+                                    root.clear-selection();
                                 }
                             }
                         }

@@ -1885,6 +1885,12 @@ impl BrowserState {
             ));
         }
 
+        if *self.current_dir.borrow() != *self.last_loaded_directory.borrow() {
+            return Some(format!(
+                "Wait for the current folder to finish loading before you {action}"
+            ));
+        }
+
         if *self.rename_mode.borrow() {
             return Some(format!(
                 "Finish or cancel the current rename before you {action}"
@@ -3565,6 +3571,20 @@ mod tests {
     fn rename_or_create_block_reason_reports_loading_before_create() {
         let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
         *state.directory_load_pending.borrow_mut() = true;
+
+        let message = state.rename_or_create_block_reason("create a file");
+
+        assert_eq!(
+            message.as_deref(),
+            Some("Wait for the current folder to finish loading before you create a file")
+        );
+    }
+
+    #[test]
+    fn rename_or_create_block_reason_reports_when_navigation_target_is_not_yet_loaded() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        *state.current_dir.borrow_mut() = PathBuf::from("/workspace/heavy");
+        *state.last_loaded_directory.borrow_mut() = PathBuf::from("/workspace");
 
         let message = state.rename_or_create_block_reason("create a file");
 
