@@ -74,6 +74,12 @@ component SidebarRow inherits Rectangle {
     border-width: 0px;
     background: selected ? #e8f0fe : (sidebar-touch.has-hover ? #f4f7fb : transparent);
 
+    sidebar-touch := TouchArea {
+        clicked => {
+            root.activated();
+        }
+    }
+
     HorizontalBox {
         padding-left: 0px;
         padding-right: 8px;
@@ -140,12 +146,6 @@ component SidebarRow inherits Rectangle {
                     root.remove-requested();
                 }
             }
-        }
-    }
-
-    sidebar-touch := TouchArea {
-        clicked => {
-            root.activated();
         }
     }
 }

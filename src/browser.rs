@@ -305,7 +305,7 @@ impl BrowserState {
     }
 
     pub fn navigate_home(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
-        if let Some(target) = self.sidebar_targets.borrow().first().cloned() {
+        if let Some(target) = self.sidebar_target(0) {
             self.navigate_to(target.path, NavigationMode::PushCurrent, window, file_model);
         }
     }
@@ -343,8 +343,7 @@ impl BrowserState {
         window: &AppWindow,
         file_model: &VecModel<FileEntry>,
     ) {
-        let index = index.max(0) as usize;
-        if let Some(target) = self.sidebar_targets.borrow().get(index).cloned() {
+        if let Some(target) = self.sidebar_target(index.max(0) as usize) {
             self.navigate_to(target.path, NavigationMode::PushCurrent, window, file_model);
         }
     }
@@ -1712,6 +1711,10 @@ impl BrowserState {
         build_sidebar_entries(&self.workspace_dir, &favorite_paths, &recent_paths)
     }
 
+    fn sidebar_target(&self, index: usize) -> Option<SidebarItemTarget> {
+        self.sidebar_targets.borrow().get(index).cloned()
+    }
+
     fn open_path(&self, path: PathBuf, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         self.clear_status_override();
         self.cancel_rename_internal();
@@ -1994,7 +1997,7 @@ impl BrowserState {
 
     fn remove_sidebar_item_state(&self, index: i32) -> String {
         let index = index.max(0) as usize;
-        let Some(target) = self.sidebar_targets.borrow().get(index).cloned() else {
+        let Some(target) = self.sidebar_target(index) else {
             return "Sidebar item not found".to_string();
         };
 
@@ -3832,6 +3835,34 @@ mod tests {
         *state.breadcrumb_paths.borrow_mut() = vec![PathBuf::from("/workspace/next")];
 
         assert_eq!(target, PathBuf::from("/workspace/docs"));
+    }
+
+    #[test]
+    fn sidebar_target_lookup_does_not_hold_refcell_borrow_across_followup_mutation() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        *state.sidebar_targets.borrow_mut() = vec![
+            SidebarItemTarget {
+                path: PathBuf::from("/workspace"),
+                kind: SidebarItemKind::Default,
+            },
+            SidebarItemTarget {
+                path: PathBuf::from("/workspace/docs"),
+                kind: SidebarItemKind::Recent,
+            },
+        ];
+
+        let target = state
+            .sidebar_target(1)
+            .expect("sidebar target should exist");
+
+        *state.sidebar_targets.borrow_mut() = vec![SidebarItemTarget {
+            path: PathBuf::from("/workspace/next"),
+            kind: SidebarItemKind::Default,
+        }];
+
+        assert_eq!(target.path, PathBuf::from("/workspace/docs"));
+        assert_eq!(target.kind, SidebarItemKind::Recent);
     }
 
     #[test]
