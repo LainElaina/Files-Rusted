@@ -141,11 +141,8 @@ component SidebarRow inherits Rectangle {
     }
 
     sidebar-touch := TouchArea {
-        pointer-event(event) => {
-            if (event.kind == PointerEventKind.down &&
-                (event.button == PointerEventButton.left || event.button == PointerEventButton.right)) {
-                root.activated();
-            }
+        clicked => {
+            root.activated();
         }
     }
 }

@@ -52,6 +52,7 @@ use settings::{
 };
 
 pub struct BrowserState {
+    workspace_dir: PathBuf,
     current_dir: RefCell<PathBuf>,
     loaded_entries: RefCell<Vec<DirectoryEntry>>,
     visible_paths: RefCell<Vec<PathBuf>>,
@@ -112,6 +113,7 @@ impl BrowserState {
         let start_dir_label = effective_start_dir.display().to_string();
         (
             Self {
+                workspace_dir: effective_start_dir.clone(),
                 current_dir: RefCell::new(effective_start_dir.clone()),
                 loaded_entries: RefCell::new(Vec::new()),
                 visible_paths: RefCell::new(Vec::new()),
@@ -1698,12 +1700,16 @@ impl BrowserState {
         window.set_breadcrumb_items(ModelRc::from(Rc::new(VecModel::from(items))));
     }
 
-    fn update_sidebar_items(&self, window: &AppWindow, current_dir: &Path) {
-        let favorite_paths = self.favorite_paths.borrow().clone();
-        let recent_paths = self.recent_paths.borrow().clone();
-        let (items, targets) = build_sidebar_entries(current_dir, &favorite_paths, &recent_paths);
+    fn update_sidebar_items(&self, window: &AppWindow, _current_dir: &Path) {
+        let (items, targets) = self.build_sidebar_items();
         *self.sidebar_targets.borrow_mut() = targets;
         window.set_sidebar_items(ModelRc::from(Rc::new(VecModel::from(items))));
+    }
+
+    fn build_sidebar_items(&self) -> (Vec<SidebarEntry>, Vec<SidebarItemTarget>) {
+        let favorite_paths = self.favorite_paths.borrow().clone();
+        let recent_paths = self.recent_paths.borrow().clone();
+        build_sidebar_entries(&self.workspace_dir, &favorite_paths, &recent_paths)
     }
 
     fn open_path(&self, path: PathBuf, window: &AppWindow, file_model: &VecModel<FileEntry>) {
@@ -2764,6 +2770,30 @@ mod tests {
 
         assert_eq!(message, "Cleared recent directories");
         assert!(state.recent_paths.borrow().is_empty());
+    }
+
+    #[test]
+    fn browser_state_build_sidebar_items_keeps_original_workspace_target() {
+        let workspace = PathBuf::from("/workspace/root");
+        let (state, _) = BrowserState::new(workspace.clone());
+        let recent = PathBuf::from("/workspace/root/heavy");
+
+        *state.current_dir.borrow_mut() = PathBuf::from("/workspace/root/paste-src");
+        *state.recent_paths.borrow_mut() = vec![recent.clone()];
+
+        let (entries, targets) = state.build_sidebar_items();
+
+        let workspace_index = entries
+            .iter()
+            .position(|entry| entry.label.as_str() == "Workspace")
+            .expect("workspace entry should exist");
+        let recent_index = entries
+            .iter()
+            .position(|entry| entry.label.as_str() == "Recent: heavy")
+            .expect("recent entry should exist");
+
+        assert_eq!(targets[workspace_index].path, workspace);
+        assert_eq!(targets[recent_index].path, recent);
     }
 
     #[test]
