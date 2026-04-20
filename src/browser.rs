@@ -81,6 +81,7 @@ pub struct BrowserState {
     directory_load_pending: RefCell<bool>,
     pending_directory_load_results: SharedLoadResults<Vec<DirectoryEntry>>,
     pending_reveal_path: RefCell<Option<PathBuf>>,
+    pending_rename_path: RefCell<Option<PathBuf>>,
     last_loaded_directory: RefCell<PathBuf>,
 }
 
@@ -137,6 +138,7 @@ impl BrowserState {
                 directory_load_pending: RefCell::new(false),
                 pending_directory_load_results: Arc::new(Mutex::new(Vec::new())),
                 pending_reveal_path: RefCell::new(None),
+                pending_rename_path: RefCell::new(None),
                 last_loaded_directory: RefCell::new(effective_start_dir),
             },
             sidebar_entries,
@@ -267,6 +269,7 @@ impl BrowserState {
         let current_dir = self.current_dir.borrow().clone();
         *self.path_draft.borrow_mut() = current_dir.display().to_string();
         self.pending_reveal_path.borrow_mut().take();
+        self.pending_rename_path.borrow_mut().take();
         self.request_directory_load(current_dir, window, file_model);
     }
 
@@ -441,19 +444,27 @@ impl BrowserState {
     }
 
     pub fn create_file(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        if let Some(message) = self.rename_or_create_block_reason("create a file") {
+            *self.status_override.borrow_mut() = Some(message);
+            self.apply_view(window, file_model);
+            return;
+        }
+
         let current_dir = self.current_dir.borrow().clone();
         let target = unique_child_path(&current_dir, "New File", Some("txt"));
 
         match fs::File::create(&target) {
             Ok(_) => {
-                self.cancel_rename_internal();
-                self.selection_state
-                    .borrow_mut()
-                    .set_single_selection(Some(target.clone()));
-                *self.status_override.borrow_mut() =
-                    Some(format!("Created file {}", item_name(&target)));
-                self.refresh(window, file_model);
-                self.request_rename_selected(window, file_model);
+                *self.status_override.borrow_mut() = Some(format!(
+                    "Created file {}. Rename it or press Enter to keep the name",
+                    item_name(&target)
+                ));
+                self.refresh_current_directory_with_reveal_and_optional_rename(
+                    Some(target),
+                    true,
+                    window,
+                    file_model,
+                );
             }
             Err(error) => {
                 *self.status_override.borrow_mut() =
@@ -464,19 +475,27 @@ impl BrowserState {
     }
 
     pub fn create_folder(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        if let Some(message) = self.rename_or_create_block_reason("create a folder") {
+            *self.status_override.borrow_mut() = Some(message);
+            self.apply_view(window, file_model);
+            return;
+        }
+
         let current_dir = self.current_dir.borrow().clone();
         let target = unique_child_path(&current_dir, "New Folder", None);
 
         match fs::create_dir(&target) {
             Ok(()) => {
-                self.cancel_rename_internal();
-                self.selection_state
-                    .borrow_mut()
-                    .set_single_selection(Some(target.clone()));
-                *self.status_override.borrow_mut() =
-                    Some(format!("Created folder {}", item_name(&target)));
-                self.refresh(window, file_model);
-                self.request_rename_selected(window, file_model);
+                *self.status_override.borrow_mut() = Some(format!(
+                    "Created folder {}. Rename it or press Enter to keep the name",
+                    item_name(&target)
+                ));
+                self.refresh_current_directory_with_reveal_and_optional_rename(
+                    Some(target),
+                    true,
+                    window,
+                    file_model,
+                );
             }
             Err(error) => {
                 *self.status_override.borrow_mut() =
@@ -487,6 +506,12 @@ impl BrowserState {
     }
 
     pub fn request_rename_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        if let Some(message) = self.rename_or_create_block_reason("rename an item") {
+            *self.status_override.borrow_mut() = Some(message);
+            self.apply_view(window, file_model);
+            return;
+        }
+
         let selection = self.selection_state.borrow().selected_items_for_operation();
         if selection.len() != 1 {
             *self.status_override.borrow_mut() =
@@ -502,9 +527,7 @@ impl BrowserState {
             return;
         };
 
-        *self.rename_mode.borrow_mut() = true;
-        *self.rename_draft.borrow_mut() = item_name(&path);
-        self.clear_status_override();
+        self.enter_rename_mode_for_path(&path, true);
         self.apply_view(window, file_model);
     }
 
@@ -761,7 +784,8 @@ impl BrowserState {
 
         let draft = self.rename_draft.borrow().trim().to_string();
         if draft.is_empty() {
-            *self.status_override.borrow_mut() = Some("Name cannot be empty".to_string());
+            *self.status_override.borrow_mut() =
+                Some("Name cannot be empty. Press Escape to cancel.".to_string());
             self.apply_view(window, file_model);
             return;
         }
@@ -783,8 +807,10 @@ impl BrowserState {
 
         let new_path = parent.join(&draft);
         if new_path.exists() {
-            *self.status_override.borrow_mut() =
-                Some(format!("An item named {} already exists", draft));
+            *self.status_override.borrow_mut() = Some(format!(
+                "Cannot rename {} because {} already exists",
+                current_name, draft
+            ));
             self.apply_view(window, file_model);
             return;
         }
@@ -926,6 +952,7 @@ impl BrowserState {
             Ok(PathNavigationTarget::Directory(target)) => {
                 *self.path_draft.borrow_mut() = target.display().to_string();
                 self.pending_reveal_path.borrow_mut().take();
+                self.pending_rename_path.borrow_mut().take();
 
                 if target == current_dir {
                     self.refresh(window, file_model);
@@ -950,6 +977,7 @@ impl BrowserState {
                         .borrow_mut()
                         .ensure_selection_anchor(Some(path));
                     self.pending_reveal_path.borrow_mut().take();
+                    self.pending_rename_path.borrow_mut().take();
                     self.apply_view(window, file_model);
                 } else {
                     self.navigate_to_with_reveal(
@@ -1121,6 +1149,20 @@ impl BrowserState {
         self.navigate_to_with_reveal(target, None, mode, window, file_model);
     }
 
+    fn refresh_current_directory_with_reveal_and_optional_rename(
+        &self,
+        reveal_path: Option<PathBuf>,
+        start_rename: bool,
+        window: &AppWindow,
+        file_model: &VecModel<FileEntry>,
+    ) {
+        let current_dir = self.current_dir.borrow().clone();
+        *self.path_draft.borrow_mut() = current_dir.display().to_string();
+        *self.pending_reveal_path.borrow_mut() = reveal_path.clone();
+        *self.pending_rename_path.borrow_mut() = if start_rename { reveal_path } else { None };
+        self.request_directory_load(current_dir, window, file_model);
+    }
+
     fn navigate_to_with_reveal(
         &self,
         target: PathBuf,
@@ -1134,7 +1176,16 @@ impl BrowserState {
         };
 
         *self.pending_reveal_path.borrow_mut() = reveal_path;
+        self.pending_rename_path.borrow_mut().take();
         self.request_directory_load(request_target, window, file_model);
+    }
+
+    fn enter_rename_mode_for_path(&self, path: &Path, clear_status: bool) {
+        *self.rename_mode.borrow_mut() = true;
+        *self.rename_draft.borrow_mut() = item_name(path);
+        if clear_status {
+            self.clear_status_override();
+        }
     }
 
     fn prepare_navigation_request(&self, target: PathBuf, mode: NavigationMode) -> Option<PathBuf> {
@@ -1156,6 +1207,7 @@ impl BrowserState {
         self.clear_status_override();
         self.cancel_rename_internal();
         self.selection_state.borrow_mut().clear_selection();
+        self.pending_rename_path.borrow_mut().take();
         *self.path_draft.borrow_mut() = target.display().to_string();
         *self.current_dir.borrow_mut() = target.clone();
         Some(target)
@@ -1651,6 +1703,7 @@ impl BrowserState {
     fn cancel_rename_internal(&self) {
         *self.rename_mode.borrow_mut() = false;
         self.rename_draft.borrow_mut().clear();
+        self.pending_rename_path.borrow_mut().take();
     }
 
     fn handle_escape_command(&self) {
@@ -1699,6 +1752,22 @@ impl BrowserState {
         self.status_override.borrow_mut().take();
     }
 
+    fn rename_or_create_block_reason(&self, action: &str) -> Option<String> {
+        if self.is_directory_load_pending() {
+            return Some(format!(
+                "Wait for the current folder to finish loading before you {action}"
+            ));
+        }
+
+        if *self.rename_mode.borrow() {
+            return Some(format!(
+                "Finish or cancel the current rename before you {action}"
+            ));
+        }
+
+        None
+    }
+
     fn apply_pending_reveal_if_ready(&self) {
         let pending = self.pending_reveal_path.borrow().clone();
         let Some(path) = pending else {
@@ -1726,12 +1795,17 @@ impl BrowserState {
                 .set_single_selection(Some(path.clone()));
             self.selection_state
                 .borrow_mut()
-                .ensure_selection_anchor(Some(path));
+                .ensure_selection_anchor(Some(path.clone()));
+            if self.pending_rename_path.borrow().as_ref() == Some(&path) {
+                self.enter_rename_mode_for_path(&path, false);
+                self.pending_rename_path.borrow_mut().take();
+            }
         } else {
             *self.status_override.borrow_mut() = Some(format!(
                 "Target is no longer available: {}",
                 item_name(&path)
             ));
+            self.pending_rename_path.borrow_mut().take();
         }
 
         self.pending_reveal_path.borrow_mut().take();
@@ -3037,6 +3111,60 @@ mod tests {
             Some(PathBuf::from("/workspace/docs/report.txt"))
         );
         assert_eq!(state.pending_reveal_path.borrow().clone(), None);
+    }
+
+    #[test]
+    fn browser_state_successful_directory_load_can_enter_pending_rename_mode() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+
+        let generation = state.begin_directory_load_request(PathBuf::from("/workspace/docs"));
+        *state.current_dir.borrow_mut() = PathBuf::from("/workspace/docs");
+        *state.pending_reveal_path.borrow_mut() = Some(PathBuf::from("/workspace/docs/report.txt"));
+        *state.pending_rename_path.borrow_mut() = Some(PathBuf::from("/workspace/docs/report.txt"));
+
+        let result = DirectoryLoadResult {
+            generation,
+            target_path: PathBuf::from("/workspace/docs"),
+            outcome: Ok(vec![directory_entry(
+                "/workspace/docs/report.txt",
+                false,
+                10,
+            )]),
+        };
+
+        assert_eq!(
+            state.apply_directory_load_result_state(result),
+            LoadResultAction::ApplySuccess
+        );
+        assert!(*state.rename_mode.borrow());
+        assert_eq!(state.rename_draft.borrow().as_str(), "report.txt");
+        assert_eq!(state.pending_rename_path.borrow().clone(), None);
+    }
+
+    #[test]
+    fn rename_or_create_block_reason_reports_loading_before_create() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        *state.directory_load_pending.borrow_mut() = true;
+
+        let message = state.rename_or_create_block_reason("create a file");
+
+        assert_eq!(
+            message.as_deref(),
+            Some("Wait for the current folder to finish loading before you create a file")
+        );
+    }
+
+    #[test]
+    fn rename_or_create_block_reason_reports_active_rename_before_new_action() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        *state.rename_mode.borrow_mut() = true;
+
+        let message = state.rename_or_create_block_reason("create a folder");
+
+        assert_eq!(
+            message.as_deref(),
+            Some("Finish or cancel the current rename before you create a folder")
+        );
     }
 
     #[test]

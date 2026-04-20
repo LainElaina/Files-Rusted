@@ -503,7 +503,7 @@ export component AppWindow inherits Window {
             } else if (event.text == Key.Escape) {
                 root.escape-pressed();
                 accept
-            } else if (event.text == Key.F2) {
+            } else if (event.text == Key.F2 && !root.directory-load-pending && !root.rename-mode) {
                 root.request-rename();
                 accept
             } else if (event.text == Key.F5) {
@@ -533,12 +533,15 @@ export component AppWindow inherits Window {
             } else if (event.modifiers.control && (event.text == "r" || event.text == "R")) {
                 root.refresh-directory();
                 accept
+            } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N") && !root.directory-load-pending && !root.rename-mode) {
+                root.create-folder();
+                accept
+            } else if (event.modifiers.control && (event.text == "n" || event.text == "N") && !root.directory-load-pending && !root.rename-mode) {
+                root.create-file();
+                accept
             } else if (event.modifiers.control && (event.text == "f" || event.text == "F")) {
                 search-input.focus();
                 search-input.select-all();
-                accept
-            } else if (event.modifiers.control && event.modifiers.shift && (event.text == "n" || event.text == "N")) {
-                root.create-folder();
                 accept
             } else if (event.modifiers.control && (event.text == "l" || event.text == "L")) {
                 path-input.focus();
@@ -732,6 +735,7 @@ export component AppWindow inherits Window {
 
                 InlineButton {
                     text: "New File";
+                    enabled: !root.directory-load-pending && !root.rename-mode;
                     clicked => {
                         root.create-file();
                     }
@@ -739,6 +743,7 @@ export component AppWindow inherits Window {
 
                 InlineButton {
                     text: "New Folder";
+                    enabled: !root.directory-load-pending && !root.rename-mode;
                     clicked => {
                         root.create-folder();
                     }
@@ -805,7 +810,8 @@ export component AppWindow inherits Window {
         background: #fff8df;
         border-width: 0px;
 
-        if root.rename-mode : HorizontalBox {
+        HorizontalBox {
+            visible: root.rename-mode;
             padding-left: 10px;
             padding-right: 10px;
             padding-top: 7px;
@@ -820,9 +826,10 @@ export component AppWindow inherits Window {
                 vertical-alignment: center;
             }
 
-            LineEdit {
+            rename-input := LineEdit {
                 text <=> root.rename-draft;
                 placeholder-text: "New name";
+                enabled: root.rename-mode;
                 edited(value) => {
                     root.rename-draft-updated(value);
                 }
@@ -834,6 +841,7 @@ export component AppWindow inherits Window {
 
             InlineButton {
                 text: "Apply";
+                enabled: root.rename-mode;
                 clicked => {
                     root.commit-rename();
                 }
@@ -841,6 +849,7 @@ export component AppWindow inherits Window {
 
             InlineButton {
                 text: "Cancel";
+                enabled: root.rename-mode;
                 clicked => {
                     root.cancel-rename();
                 }
@@ -852,6 +861,13 @@ export component AppWindow inherits Window {
             width: parent.width;
             height: 1px;
             background: #ead9a6;
+        }
+    }
+
+    changed rename-mode => {
+        if (root.rename-mode) {
+            rename-input.focus();
+            rename-input.select-all();
         }
     }
 
@@ -966,7 +982,7 @@ export component AppWindow inherits Window {
 
                     MenuItem {
                         title: "Rename";
-                        enabled: root.can-rename-selection;
+                        enabled: root.can-rename-selection && !root.directory-load-pending;
                         activated => {
                             root.request-rename();
                         }
@@ -982,6 +998,7 @@ export component AppWindow inherits Window {
 
                     MenuItem {
                         title: "New File";
+                        enabled: !root.directory-load-pending && !root.rename-mode;
                         activated => {
                             root.create-file();
                         }
@@ -989,6 +1006,7 @@ export component AppWindow inherits Window {
 
                     MenuItem {
                         title: "New Folder";
+                        enabled: !root.directory-load-pending && !root.rename-mode;
                         activated => {
                             root.create-folder();
                         }
