@@ -119,21 +119,24 @@ component SidebarRow inherits Rectangle {
                 vertical-alignment: center;
             }
         }
-    }
 
-    ContextMenuArea {
-        Menu {
-            MenuItem {
-                title: "Open";
-                activated => {
-                    root.activated();
-                }
+        if entry.removable : Rectangle {
+            width: 20px;
+            height: 20px;
+            border-radius: 99px;
+            background: remove-touch.pressed ? #dbe7f7 : (remove-touch.has-hover ? #eef3f8 : transparent);
+
+            Text {
+                text: "×";
+                color: #64748b;
+                font-size: 12px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
             }
 
-            MenuItem {
-                title: entry.remove-action-label;
-                enabled: entry.removable;
-                activated => {
+            remove-touch := TouchArea {
+                clicked => {
                     root.remove-requested();
                 }
             }
