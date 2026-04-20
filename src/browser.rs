@@ -82,6 +82,8 @@ pub struct BrowserState {
     pending_directory_load_results: SharedLoadResults<Vec<DirectoryEntry>>,
     pending_reveal_path: RefCell<Option<PathBuf>>,
     pending_rename_path: RefCell<Option<PathBuf>>,
+    pending_post_load_selection: RefCell<Option<Vec<PathBuf>>>,
+    pending_post_load_status: RefCell<Option<String>>,
     last_loaded_directory: RefCell<PathBuf>,
 }
 
@@ -139,6 +141,8 @@ impl BrowserState {
                 pending_directory_load_results: Arc::new(Mutex::new(Vec::new())),
                 pending_reveal_path: RefCell::new(None),
                 pending_rename_path: RefCell::new(None),
+                pending_post_load_selection: RefCell::new(None),
+                pending_post_load_status: RefCell::new(None),
                 last_loaded_directory: RefCell::new(effective_start_dir),
             },
             sidebar_entries,
@@ -244,7 +248,11 @@ impl BrowserState {
                 if let Ok(entries) = result.outcome {
                     *self.loaded_entries.borrow_mut() = entries;
                     self.clear_status_override();
+                    self.apply_pending_post_load_selection_if_ready();
                     self.apply_pending_reveal_if_ready();
+                    if let Some(message) = self.pending_post_load_status.borrow_mut().take() {
+                        *self.status_override.borrow_mut() = Some(message);
+                    }
                     self.record_successful_directory_load();
                     self.finish_directory_load_request(result.generation, true);
                     LoadResultAction::ApplySuccess
@@ -254,6 +262,10 @@ impl BrowserState {
             }
             LoadResultAction::ApplyFailure => {
                 if let Err(error) = result.outcome {
+                    self.pending_reveal_path.borrow_mut().take();
+                    self.pending_rename_path.borrow_mut().take();
+                    self.pending_post_load_selection.borrow_mut().take();
+                    self.pending_post_load_status.borrow_mut().take();
                     *self.status_override.borrow_mut() =
                         Some(format!("Failed to open directory: {}", error.message));
                     self.finish_directory_load_request(result.generation, false);
@@ -270,6 +282,8 @@ impl BrowserState {
         *self.path_draft.borrow_mut() = current_dir.display().to_string();
         self.pending_reveal_path.borrow_mut().take();
         self.pending_rename_path.borrow_mut().take();
+        self.pending_post_load_selection.borrow_mut().take();
+        self.pending_post_load_status.borrow_mut().take();
         self.request_directory_load(current_dir, window, file_model);
     }
 
@@ -455,13 +469,15 @@ impl BrowserState {
 
         match fs::File::create(&target) {
             Ok(_) => {
-                *self.status_override.borrow_mut() = Some(format!(
+                let status = format!(
                     "Created file {}. Rename it or press Enter to keep the name",
                     item_name(&target)
-                ));
-                self.refresh_current_directory_with_reveal_and_optional_rename(
-                    Some(target),
+                );
+                self.refresh_current_directory_after_operation(
+                    Some(target.clone()),
+                    vec![target],
                     true,
+                    Some(status),
                     window,
                     file_model,
                 );
@@ -486,13 +502,15 @@ impl BrowserState {
 
         match fs::create_dir(&target) {
             Ok(()) => {
-                *self.status_override.borrow_mut() = Some(format!(
+                let status = format!(
                     "Created folder {}. Rename it or press Enter to keep the name",
                     item_name(&target)
-                ));
-                self.refresh_current_directory_with_reveal_and_optional_rename(
-                    Some(target),
+                );
+                self.refresh_current_directory_after_operation(
+                    Some(target.clone()),
+                    vec![target],
                     true,
+                    Some(status),
                     window,
                     file_model,
                 );
@@ -579,7 +597,11 @@ impl BrowserState {
         }
 
         let current_dir = self.current_dir.borrow().clone();
-        let (duplicated_paths, failures) = duplicate_paths_into_directory(&selected, &current_dir);
+        let (duplicated_pairs, failures) = duplicate_paths_into_directory(&selected, &current_dir);
+        let duplicated_paths = duplicated_pairs
+            .iter()
+            .map(|(_, destination)| destination.clone())
+            .collect::<Vec<_>>();
         if duplicated_paths.is_empty() {
             *self.status_override.borrow_mut() = Some(if failures.is_empty() {
                 "Nothing was duplicated".to_string()
@@ -591,21 +613,15 @@ impl BrowserState {
         }
 
         self.cancel_rename_internal();
-        self.selection_state.borrow_mut().set_explicit_selection(
-            duplicated_paths.clone(),
+        let status = summarize_duplicate_completion(&duplicated_pairs, &failures);
+        self.refresh_current_directory_after_operation(
             duplicated_paths.last().cloned(),
-            duplicated_paths.last().cloned(),
+            duplicated_paths,
+            false,
+            Some(status),
+            window,
+            file_model,
         );
-        *self.status_override.borrow_mut() = Some(if failures.is_empty() {
-            format!("Duplicated {}", format_item_count(duplicated_paths.len()))
-        } else {
-            format!(
-                "Duplicated {}, {} issue(s)",
-                format_item_count(duplicated_paths.len()),
-                failures.len()
-            )
-        });
-        self.refresh(window, file_model);
     }
 
     pub fn request_cut_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
@@ -625,6 +641,18 @@ impl BrowserState {
             "Ready to move {}",
             format_item_count(selected.len())
         ));
+        self.apply_view(window, file_model);
+    }
+
+    pub fn clear_pending_transfer(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
+        if self.pending_transfer.borrow().is_none() {
+            *self.status_override.borrow_mut() = Some("Clipboard is already empty".to_string());
+            self.apply_view(window, file_model);
+            return;
+        }
+
+        self.pending_transfer.borrow_mut().take();
+        *self.status_override.borrow_mut() = Some("Cleared clipboard".to_string());
         self.apply_view(window, file_model);
     }
 
@@ -674,7 +702,7 @@ impl BrowserState {
         };
 
         let current_dir = self.current_dir.borrow().clone();
-        let mut pasted_paths = Vec::new();
+        let mut completed_transfers = Vec::new();
         let mut failures = Vec::new();
 
         for source in &transfer.sources {
@@ -708,7 +736,7 @@ impl BrowserState {
             };
 
             match operation_result {
-                Ok(()) => pasted_paths.push(destination),
+                Ok(()) => completed_transfers.push((source.clone(), destination)),
                 Err(error) => failures.push(format!("{}: {}", item_name(source), error)),
             }
         }
@@ -730,7 +758,7 @@ impl BrowserState {
             }
         }
 
-        if pasted_paths.is_empty() {
+        if completed_transfers.is_empty() {
             *self.status_override.borrow_mut() = Some(if failures.is_empty() {
                 "Nothing was pasted".to_string()
             } else {
@@ -741,27 +769,19 @@ impl BrowserState {
         }
 
         self.cancel_rename_internal();
-        self.selection_state.borrow_mut().set_explicit_selection(
-            pasted_paths.clone(),
+        let pasted_paths = completed_transfers
+            .iter()
+            .map(|(_, destination)| destination.clone())
+            .collect::<Vec<_>>();
+        let status = summarize_paste_completion(transfer.kind, &completed_transfers, &failures);
+        self.refresh_current_directory_after_operation(
             pasted_paths.last().cloned(),
-            pasted_paths.last().cloned(),
+            pasted_paths,
+            false,
+            Some(status),
+            window,
+            file_model,
         );
-
-        *self.status_override.borrow_mut() = Some(if failures.is_empty() {
-            format!(
-                "{} pasted into {}",
-                format_item_count(pasted_paths.len()),
-                current_dir.display()
-            )
-        } else {
-            format!(
-                "{} pasted, {} issue(s)",
-                format_item_count(pasted_paths.len()),
-                failures.len()
-            )
-        });
-
-        self.refresh(window, file_model);
     }
 
     pub fn commit_rename(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
@@ -1149,10 +1169,12 @@ impl BrowserState {
         self.navigate_to_with_reveal(target, None, mode, window, file_model);
     }
 
-    fn refresh_current_directory_with_reveal_and_optional_rename(
+    fn refresh_current_directory_after_operation(
         &self,
         reveal_path: Option<PathBuf>,
+        select_paths: Vec<PathBuf>,
         start_rename: bool,
+        post_load_status: Option<String>,
         window: &AppWindow,
         file_model: &VecModel<FileEntry>,
     ) {
@@ -1160,6 +1182,12 @@ impl BrowserState {
         *self.path_draft.borrow_mut() = current_dir.display().to_string();
         *self.pending_reveal_path.borrow_mut() = reveal_path.clone();
         *self.pending_rename_path.borrow_mut() = if start_rename { reveal_path } else { None };
+        *self.pending_post_load_selection.borrow_mut() = if select_paths.is_empty() {
+            None
+        } else {
+            Some(select_paths)
+        };
+        *self.pending_post_load_status.borrow_mut() = post_load_status;
         self.request_directory_load(current_dir, window, file_model);
     }
 
@@ -1177,6 +1205,8 @@ impl BrowserState {
 
         *self.pending_reveal_path.borrow_mut() = reveal_path;
         self.pending_rename_path.borrow_mut().take();
+        self.pending_post_load_selection.borrow_mut().take();
+        self.pending_post_load_status.borrow_mut().take();
         self.request_directory_load(request_target, window, file_model);
     }
 
@@ -1207,7 +1237,8 @@ impl BrowserState {
         self.clear_status_override();
         self.cancel_rename_internal();
         self.selection_state.borrow_mut().clear_selection();
-        self.pending_rename_path.borrow_mut().take();
+        self.pending_post_load_selection.borrow_mut().take();
+        self.pending_post_load_status.borrow_mut().take();
         *self.path_draft.borrow_mut() = target.display().to_string();
         *self.current_dir.borrow_mut() = target.clone();
         Some(target)
@@ -1768,6 +1799,35 @@ impl BrowserState {
         None
     }
 
+    fn apply_pending_post_load_selection_if_ready(&self) {
+        let pending = self.pending_post_load_selection.borrow().clone();
+        let Some(paths) = pending else {
+            return;
+        };
+
+        let loaded_paths = self
+            .loaded_entries
+            .borrow()
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        let existing = paths
+            .into_iter()
+            .filter(|path| loaded_paths.contains(path))
+            .collect::<Vec<_>>();
+
+        if !existing.is_empty() {
+            let focus = existing.last().cloned();
+            self.selection_state.borrow_mut().set_explicit_selection(
+                existing,
+                focus.clone(),
+                focus,
+            );
+        }
+
+        self.pending_post_load_selection.borrow_mut().take();
+    }
+
     fn apply_pending_reveal_if_ready(&self) {
         let pending = self.pending_reveal_path.borrow().clone();
         let Some(path) = pending else {
@@ -2115,7 +2175,7 @@ enum TransferKind {
 fn duplicate_paths_into_directory(
     sources: &[PathBuf],
     current_dir: &Path,
-) -> (Vec<PathBuf>, Vec<String>) {
+) -> (Vec<(PathBuf, PathBuf)>, Vec<String>) {
     let mut duplicated_paths = Vec::new();
     let mut failures = Vec::new();
 
@@ -2127,12 +2187,74 @@ fn duplicate_paths_into_directory(
 
         let destination = destination_for_transfer(TransferKind::Copy, source, current_dir);
         match copy_path(source, &destination) {
-            Ok(()) => duplicated_paths.push(destination),
+            Ok(()) => duplicated_paths.push((source.clone(), destination)),
             Err(error) => failures.push(format!("{}: {}", item_name(source), error)),
         }
     }
 
     (duplicated_paths, failures)
+}
+
+fn summarize_duplicate_completion(completed: &[(PathBuf, PathBuf)], failures: &[String]) -> String {
+    if completed.len() == 1 && failures.is_empty() {
+        let (source, destination) = &completed[0];
+        return format!(
+            "Duplicated {} as {}",
+            item_name(source),
+            item_name(destination)
+        );
+    }
+
+    if failures.is_empty() {
+        return format!("Duplicated {}", format_item_count(completed.len()));
+    }
+
+    format!(
+        "Duplicated {}, {} issue(s)",
+        format_item_count(completed.len()),
+        failures.len()
+    )
+}
+
+fn summarize_paste_completion(
+    kind: TransferKind,
+    completed: &[(PathBuf, PathBuf)],
+    failures: &[String],
+) -> String {
+    if completed.len() == 1 && failures.is_empty() {
+        let (source, destination) = &completed[0];
+        let verb = match kind {
+            TransferKind::Copy => "Copied",
+            TransferKind::Cut => "Moved",
+        };
+        return format!(
+            "{} {} to {}",
+            verb,
+            item_name(source),
+            item_name(destination)
+        );
+    }
+
+    if failures.is_empty() {
+        return format!(
+            "{} {}",
+            match kind {
+                TransferKind::Copy => "Copied",
+                TransferKind::Cut => "Moved",
+            },
+            format_item_count(completed.len())
+        );
+    }
+
+    format!(
+        "{} {}, {} issue(s)",
+        match kind {
+            TransferKind::Copy => "Copied",
+            TransferKind::Cut => "Moved",
+        },
+        format_item_count(completed.len()),
+        failures.len()
+    )
 }
 
 #[cfg(test)]
@@ -2431,10 +2553,68 @@ mod tests {
 
         assert!(failures.is_empty());
         assert_eq!(duplicated.len(), 1);
-        assert_eq!(duplicated[0].file_name().unwrap(), "report Copy.txt");
-        assert_eq!(fs::read_to_string(&duplicated[0]).unwrap(), "hello");
+        assert_eq!(duplicated[0].1.file_name().unwrap(), "report Copy.txt");
+        assert_eq!(fs::read_to_string(&duplicated[0].1).unwrap(), "hello");
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn apply_pending_post_load_selection_restores_multi_selection_after_reload() {
+        let (state, _) = BrowserState::new(PathBuf::from("/workspace"));
+        state.loaded_entries.borrow_mut().extend([
+            directory_entry("/workspace/a.txt", false, 10),
+            directory_entry("/workspace/b.txt", false, 20),
+        ]);
+        *state.pending_post_load_selection.borrow_mut() = Some(vec![
+            PathBuf::from("/workspace/a.txt"),
+            PathBuf::from("/workspace/b.txt"),
+        ]);
+
+        state.apply_pending_post_load_selection_if_ready();
+
+        assert_eq!(
+            state.selection_state.borrow().selected_paths(),
+            [
+                PathBuf::from("/workspace/a.txt"),
+                PathBuf::from("/workspace/b.txt")
+            ]
+        );
+        assert_eq!(
+            state
+                .selection_state
+                .borrow()
+                .primary_selected_path()
+                .cloned(),
+            Some(PathBuf::from("/workspace/b.txt"))
+        );
+    }
+
+    #[test]
+    fn summarize_duplicate_completion_reports_single_item_target_name() {
+        let summary = summarize_duplicate_completion(
+            &[(
+                PathBuf::from("/workspace/report.txt"),
+                PathBuf::from("/workspace/report Copy.txt"),
+            )],
+            &[],
+        );
+
+        assert_eq!(summary, "Duplicated report.txt as report Copy.txt");
+    }
+
+    #[test]
+    fn summarize_paste_completion_reports_single_copy_target_name() {
+        let summary = summarize_paste_completion(
+            TransferKind::Copy,
+            &[(
+                PathBuf::from("/workspace/report.txt"),
+                PathBuf::from("/workspace/report Copy.txt"),
+            )],
+            &[],
+        );
+
+        assert_eq!(summary, "Copied report.txt to report Copy.txt");
     }
 
     #[test]

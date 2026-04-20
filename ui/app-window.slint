@@ -401,6 +401,7 @@ export component AppWindow inherits Window {
     callback request-copy();
     callback duplicate-selected();
     callback request-cut();
+    callback clear-pending-transfer();
     callback paste-into-current-directory();
     callback create-folder();
     callback open-selected();
@@ -758,6 +759,14 @@ export component AppWindow inherits Window {
                 }
 
                 InlineButton {
+                    text: "Clear Clipboard";
+                    enabled: root.can-paste;
+                    clicked => {
+                        root.clear-pending-transfer();
+                    }
+                }
+
+                InlineButton {
                     text: "Clear Recents";
                     enabled: root.can-clear-recents;
                     clicked => {
@@ -977,6 +986,14 @@ export component AppWindow inherits Window {
                         enabled: root.can-paste;
                         activated => {
                             root.paste-into-current-directory();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Clear Clipboard";
+                        enabled: root.can-paste;
+                        activated => {
+                            root.clear-pending-transfer();
                         }
                     }
 

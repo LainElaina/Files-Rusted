@@ -73,6 +73,17 @@ fn main() -> Result<(), slint::PlatformError> {
         let window_weak = window.as_weak();
         let state = state.clone();
         let file_model = file_model.clone();
+        window.on_clear_pending_transfer(move || {
+            if let Some(window) = window_weak.upgrade() {
+                state.clear_pending_transfer(&window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
         window.on_paste_into_current_directory(move || {
             if let Some(window) = window_weak.upgrade() {
                 state.paste_into_current_dir(&window, file_model.as_ref());
