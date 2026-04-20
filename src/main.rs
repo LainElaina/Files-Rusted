@@ -15,13 +15,17 @@ fn main() -> Result<(), slint::PlatformError> {
     let sidebar_model = Rc::new(VecModel::from(sidebar_entries));
     let file_model = Rc::new(VecModel::from(Vec::<FileEntry>::new()));
     let sort_options_model = Rc::new(VecModel::from(BrowserState::sort_options()));
+    let conflict_strategy_options_model =
+        Rc::new(VecModel::from(BrowserState::conflict_strategy_options()));
     let breadcrumb_model = Rc::new(VecModel::from(Vec::<BreadcrumbEntry>::new()));
 
     window.set_sidebar_items(ModelRc::from(sidebar_model.clone()));
     window.set_file_items(ModelRc::from(file_model.clone()));
     window.set_sort_options(ModelRc::from(sort_options_model.clone()));
+    window.set_conflict_strategy_options(ModelRc::from(conflict_strategy_options_model.clone()));
     window.set_breadcrumb_items(ModelRc::from(breadcrumb_model.clone()));
     window.set_current_sort_index(state.current_sort_index());
+    window.set_current_conflict_strategy_index(state.current_conflict_strategy_index());
 
     state.refresh(&window, file_model.as_ref());
 
@@ -197,6 +201,17 @@ fn main() -> Result<(), slint::PlatformError> {
         let window_weak = window.as_weak();
         let state = state.clone();
         let file_model = file_model.clone();
+        window.on_delete_selected_permanently(move || {
+            if let Some(window) = window_weak.upgrade() {
+                state.delete_selected_permanently(&window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
         window.on_navigate_back(move || {
             if let Some(window) = window_weak.upgrade() {
                 state.navigate_back(&window, file_model.as_ref());
@@ -343,6 +358,17 @@ fn main() -> Result<(), slint::PlatformError> {
         window.on_delete_item(move |index| {
             if let Some(window) = window_weak.upgrade() {
                 state.delete_item(index, &window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
+        window.on_delete_item_permanently(move |index| {
+            if let Some(window) = window_weak.upgrade() {
+                state.delete_item_permanently(index, &window, file_model.as_ref());
             }
         });
     }
@@ -595,6 +621,17 @@ fn main() -> Result<(), slint::PlatformError> {
         window.on_cycle_sort_column(move |column| {
             if let Some(window) = window_weak.upgrade() {
                 state.cycle_sort_column(column, &window, file_model.as_ref());
+            }
+        });
+    }
+
+    {
+        let window_weak = window.as_weak();
+        let state = state.clone();
+        let file_model = file_model.clone();
+        window.on_conflict_strategy_selected(move |index| {
+            if let Some(window) = window_weak.upgrade() {
+                state.set_conflict_strategy(index, &window, file_model.as_ref());
             }
         });
     }

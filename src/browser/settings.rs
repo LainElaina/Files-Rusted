@@ -10,6 +10,7 @@ const DEFAULT_SORT_MODE_KEY: &str = "name-asc";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct BrowserSettings {
     pub(super) sort_mode_key: String,
+    pub(super) conflict_strategy_key: String,
     pub(super) show_hidden: bool,
     pub(super) last_directory: Option<PathBuf>,
 }
@@ -18,6 +19,7 @@ impl Default for BrowserSettings {
     fn default() -> Self {
         Self {
             sort_mode_key: DEFAULT_SORT_MODE_KEY.to_string(),
+            conflict_strategy_key: "keep-both".to_string(),
             show_hidden: false,
             last_directory: None,
         }
@@ -57,8 +59,9 @@ fn save_browser_settings_to_path(path: &Path, settings: &BrowserSettings) -> io:
     }
 
     let contents = format!(
-        "sort_mode={}\nshow_hidden={}\nlast_directory={}\n",
+        "sort_mode={}\nconflict_strategy={}\nshow_hidden={}\nlast_directory={}\n",
         settings.sort_mode_key,
+        settings.conflict_strategy_key,
         settings.show_hidden,
         settings
             .last_directory
@@ -82,6 +85,12 @@ fn parse_browser_settings(contents: &str) -> BrowserSettings {
                 let value = value.trim();
                 if !value.is_empty() {
                     settings.sort_mode_key = value.to_string();
+                }
+            }
+            "conflict_strategy" => {
+                let value = value.trim();
+                if !value.is_empty() {
+                    settings.conflict_strategy_key = value.to_string();
                 }
             }
             "show_hidden" => {
@@ -160,6 +169,7 @@ mod tests {
 
         let settings = BrowserSettings {
             sort_mode_key: "modified-newest".to_string(),
+            conflict_strategy_key: "overwrite".to_string(),
             show_hidden: true,
             last_directory: Some(dir.join("workspace")),
         };
@@ -175,13 +185,14 @@ mod tests {
     #[test]
     fn parse_browser_settings_ignores_unknown_keys_and_bad_lines() {
         let settings = parse_browser_settings(
-            "sort_mode=size-desc\nshow_hidden=yes\nunknown=value\nbad-line\n",
+            "sort_mode=size-desc\nconflict_strategy=skip\nshow_hidden=yes\nunknown=value\nbad-line\n",
         );
 
         assert_eq!(
             settings,
             BrowserSettings {
                 sort_mode_key: "size-desc".to_string(),
+                conflict_strategy_key: "skip".to_string(),
                 show_hidden: true,
                 last_directory: None,
             }

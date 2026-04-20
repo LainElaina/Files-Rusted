@@ -191,6 +191,7 @@ component FileRow inherits Rectangle {
     callback cut-requested;
     callback rename-requested;
     callback delete-requested;
+    callback delete-permanently-requested;
 
     height: 31px;
     border-width: 0px;
@@ -340,9 +341,16 @@ component FileRow inherits Rectangle {
             }
 
             MenuItem {
-                title: "Delete";
+                title: "Move to Trash";
                 activated => {
                     root.delete-requested();
+                }
+            }
+
+            MenuItem {
+                title: "Delete Permanently";
+                activated => {
+                    root.delete-permanently-requested();
                 }
             }
         }
@@ -365,6 +373,7 @@ export component AppWindow inherits Window {
     in-out property<int> total-item-count: 0;
     in-out property<int> active-sidebar-index: 0;
     in-out property<int> current-sort-index: 0;
+    in-out property<int> current-conflict-strategy-index: 0;
     in-out property<int> selected-file-index: -1;
     in-out property<bool> can-navigate-back: false;
     in-out property<bool> can-navigate-forward: false;
@@ -393,6 +402,7 @@ export component AppWindow inherits Window {
     in-out property<[FileEntry]> file-items;
     in-out property<[BreadcrumbEntry]> breadcrumb-items;
     in-out property<[string]> sort-options;
+    in-out property<[string]> conflict-strategy-options;
     in property<length> type-column-width: 112px;
     in property<length> size-column-width: 92px;
     in property<length> modified-column-width: 148px;
@@ -414,6 +424,7 @@ export component AppWindow inherits Window {
     callback path-draft-updated(string);
     callback submit-path-navigation();
     callback delete-selected();
+    callback delete-selected-permanently();
     callback navigate-back();
     callback navigate-forward();
     callback navigate-home();
@@ -430,6 +441,7 @@ export component AppWindow inherits Window {
     callback request-cut-item(int);
     callback request-rename-item(int);
     callback delete-item(int);
+    callback delete-item-permanently(int);
     callback select-next(bool, bool);
     callback select-previous(bool, bool);
     callback select-boundary(bool, bool, bool);
@@ -448,6 +460,7 @@ export component AppWindow inherits Window {
     callback drag-scroll-applied(float);
     callback sort-mode-selected(int);
     callback cycle-sort-column(int);
+    callback conflict-strategy-selected(int);
     callback filter-updated(string);
     callback process-directory-load-results();
     callback escape-pressed();
@@ -497,6 +510,9 @@ export component AppWindow inherits Window {
                 accept
             } else if (event.text == Key.Return) {
                 root.open-selected();
+                accept
+            } else if (event.text == Key.Delete && event.modifiers.shift) {
+                root.delete-selected-permanently();
                 accept
             } else if (event.text == Key.Delete) {
                 root.delete-selected();
@@ -799,6 +815,24 @@ export component AppWindow inherits Window {
                         root.toggle-show-hidden-files();
                     }
                 }
+
+                Text {
+                    text: "Conflicts";
+                    width: 54px;
+                    color: #64748b;
+                    font-size: 12px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                ComboBox {
+                    width: 156px;
+                    model: root.conflict-strategy-options;
+                    current-index <=> root.current-conflict-strategy-index;
+                    selected => {
+                        root.conflict-strategy-selected(root.current-conflict-strategy-index);
+                    }
+                }
             }
         }
 
@@ -1006,10 +1040,18 @@ export component AppWindow inherits Window {
                     }
 
                     MenuItem {
-                        title: "Delete";
+                        title: "Move to Trash";
                         enabled: root.can-delete-selection;
                         activated => {
                             root.delete-selected();
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Delete Permanently";
+                        enabled: root.can-delete-selection;
+                        activated => {
+                            root.delete-selected-permanently();
                         }
                     }
 
@@ -1245,6 +1287,9 @@ export component AppWindow inherits Window {
                             }
                             delete-requested => {
                                 root.delete-item(i);
+                            }
+                            delete-permanently-requested => {
+                                root.delete-item-permanently(i);
                             }
                         }
                     }

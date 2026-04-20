@@ -38,8 +38,8 @@ use drag_selection::{
 };
 use favorites::{load_favorite_paths, save_favorite_paths};
 use file_ops::{
-    copy_path, destination_for_transfer, format_item_count, item_name, launch_path, move_path,
-    unique_child_path,
+    copy_path, format_item_count, item_name, launch_path, move_path, plan_transfer_destination,
+    replace_existing_path, trash_path, unique_child_path, TransferPlan,
 };
 use pathing::{
     build_breadcrumbs, build_sidebar_entries, current_sidebar_index, resolve_navigation_target,
@@ -63,6 +63,7 @@ pub struct BrowserState {
     drag_pointer: RefCell<Option<DragPoint>>,
     selection_state: RefCell<SelectionState>,
     sort_mode: RefCell<SortMode>,
+    conflict_strategy: RefCell<ConflictStrategy>,
     show_hidden: RefCell<bool>,
     filter_query: RefCell<String>,
     path_draft: RefCell<String>,
@@ -122,6 +123,9 @@ impl BrowserState {
                 drag_pointer: RefCell::new(None),
                 selection_state: RefCell::new(SelectionState::default()),
                 sort_mode: RefCell::new(SortMode::from_storage_key(&settings.sort_mode_key)),
+                conflict_strategy: RefCell::new(ConflictStrategy::from_storage_key(
+                    &settings.conflict_strategy_key,
+                )),
                 show_hidden: RefCell::new(settings.show_hidden),
                 filter_query: RefCell::new(String::new()),
                 path_draft: RefCell::new(start_dir_label),
@@ -156,8 +160,19 @@ impl BrowserState {
             .collect()
     }
 
+    pub fn conflict_strategy_options() -> Vec<SharedString> {
+        ConflictStrategy::ALL
+            .iter()
+            .map(|strategy| SharedString::from(strategy.label()))
+            .collect()
+    }
+
     pub fn current_sort_index(&self) -> i32 {
         self.sort_mode.borrow().index()
+    }
+
+    pub fn current_conflict_strategy_index(&self) -> i32 {
+        self.conflict_strategy.borrow().index()
     }
 
     fn begin_directory_load_request(&self, _target: PathBuf) -> LoadGeneration {
@@ -597,12 +612,16 @@ impl BrowserState {
         }
 
         let current_dir = self.current_dir.borrow().clone();
-        let (duplicated_pairs, failures) = duplicate_paths_into_directory(&selected, &current_dir);
+        let (duplicated_pairs, skipped, failures) = duplicate_paths_into_directory(
+            &selected,
+            &current_dir,
+            *self.conflict_strategy.borrow(),
+        );
         let duplicated_paths = duplicated_pairs
             .iter()
-            .map(|(_, destination)| destination.clone())
+            .map(|transfer| transfer.destination.clone())
             .collect::<Vec<_>>();
-        if duplicated_paths.is_empty() {
+        if duplicated_paths.is_empty() && skipped == 0 {
             *self.status_override.borrow_mut() = Some(if failures.is_empty() {
                 "Nothing was duplicated".to_string()
             } else {
@@ -613,7 +632,7 @@ impl BrowserState {
         }
 
         self.cancel_rename_internal();
-        let status = summarize_duplicate_completion(&duplicated_pairs, &failures);
+        let status = summarize_duplicate_completion(&duplicated_pairs, skipped, &failures);
         self.refresh_current_directory_after_operation(
             duplicated_paths.last().cloned(),
             duplicated_paths,
@@ -703,6 +722,7 @@ impl BrowserState {
 
         let current_dir = self.current_dir.borrow().clone();
         let mut completed_transfers = Vec::new();
+        let mut skipped_conflicts = 0usize;
         let mut failures = Vec::new();
 
         for source in &transfer.sources {
@@ -729,15 +749,40 @@ impl BrowserState {
                 continue;
             }
 
-            let destination = destination_for_transfer(transfer.kind, source, &current_dir);
-            let operation_result = match transfer.kind {
-                TransferKind::Copy => copy_path(source, &destination),
-                TransferKind::Cut => move_path(source, &destination),
-            };
+            match plan_transfer_destination(
+                transfer.kind,
+                *self.conflict_strategy.borrow(),
+                source,
+                &current_dir,
+            ) {
+                TransferPlan::Skip => {
+                    skipped_conflicts += 1;
+                }
+                TransferPlan::Apply {
+                    destination,
+                    replace_existing,
+                } => {
+                    let operation_result = if replace_existing {
+                        replace_existing_path(&destination).and_then(|_| match transfer.kind {
+                            TransferKind::Copy => copy_path(source, &destination),
+                            TransferKind::Cut => move_path(source, &destination),
+                        })
+                    } else {
+                        match transfer.kind {
+                            TransferKind::Copy => copy_path(source, &destination),
+                            TransferKind::Cut => move_path(source, &destination),
+                        }
+                    };
 
-            match operation_result {
-                Ok(()) => completed_transfers.push((source.clone(), destination)),
-                Err(error) => failures.push(format!("{}: {}", item_name(source), error)),
+                    match operation_result {
+                        Ok(()) => completed_transfers.push(CompletedTransfer {
+                            source: source.clone(),
+                            destination,
+                            replaced_existing: replace_existing,
+                        }),
+                        Err(error) => failures.push(format!("{}: {}", item_name(source), error)),
+                    }
+                }
             }
         }
 
@@ -758,7 +803,7 @@ impl BrowserState {
             }
         }
 
-        if completed_transfers.is_empty() {
+        if completed_transfers.is_empty() && skipped_conflicts == 0 {
             *self.status_override.borrow_mut() = Some(if failures.is_empty() {
                 "Nothing was pasted".to_string()
             } else {
@@ -771,9 +816,14 @@ impl BrowserState {
         self.cancel_rename_internal();
         let pasted_paths = completed_transfers
             .iter()
-            .map(|(_, destination)| destination.clone())
+            .map(|transfer| transfer.destination.clone())
             .collect::<Vec<_>>();
-        let status = summarize_paste_completion(transfer.kind, &completed_transfers, &failures);
+        let status = summarize_paste_completion(
+            transfer.kind,
+            &completed_transfers,
+            skipped_conflicts,
+            &failures,
+        );
         self.refresh_current_directory_after_operation(
             pasted_paths.last().cloned(),
             pasted_paths,
@@ -861,17 +911,45 @@ impl BrowserState {
     pub fn delete_selected(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         let selected = self.selection_state.borrow().selected_items_for_operation();
         if selected.is_empty() {
-            *self.status_override.borrow_mut() = Some("Nothing selected to delete".to_string());
+            *self.status_override.borrow_mut() =
+                Some("Nothing selected to move to Trash".to_string());
             self.apply_view(window, file_model);
             return;
         }
 
-        self.delete_paths(selected, window, file_model);
+        self.delete_paths(selected, DeleteMode::Trash, window, file_model);
+    }
+
+    pub fn delete_selected_permanently(
+        &self,
+        window: &AppWindow,
+        file_model: &VecModel<FileEntry>,
+    ) {
+        let selected = self.selection_state.borrow().selected_items_for_operation();
+        if selected.is_empty() {
+            *self.status_override.borrow_mut() =
+                Some("Nothing selected to delete permanently".to_string());
+            self.apply_view(window, file_model);
+            return;
+        }
+
+        self.delete_paths(selected, DeleteMode::Permanent, window, file_model);
     }
 
     pub fn delete_item(&self, index: i32, window: &AppWindow, file_model: &VecModel<FileEntry>) {
         if let Some(target) = self.path_at_visible_index(index) {
-            self.delete_paths(vec![target], window, file_model);
+            self.delete_paths(vec![target], DeleteMode::Trash, window, file_model);
+        }
+    }
+
+    pub fn delete_item_permanently(
+        &self,
+        index: i32,
+        window: &AppWindow,
+        file_model: &VecModel<FileEntry>,
+    ) {
+        if let Some(target) = self.path_at_visible_index(index) {
+            self.delete_paths(vec![target], DeleteMode::Permanent, window, file_model);
         }
     }
 
@@ -893,6 +971,20 @@ impl BrowserState {
         let next = self.sort_mode.borrow().cycle_for_column(column);
 
         self.set_sort_mode(next.index(), window, file_model);
+    }
+
+    pub fn set_conflict_strategy(
+        &self,
+        index: i32,
+        window: &AppWindow,
+        file_model: &VecModel<FileEntry>,
+    ) {
+        self.clear_status_override();
+        *self.conflict_strategy.borrow_mut() = ConflictStrategy::from_index(index);
+        if let Err(error) = self.persist_browser_settings() {
+            *self.status_override.borrow_mut() = Some(format!("Failed to save settings: {error}"));
+        }
+        self.apply_view(window, file_model);
     }
 
     pub fn toggle_show_hidden(&self, window: &AppWindow, file_model: &VecModel<FileEntry>) {
@@ -1353,6 +1445,7 @@ impl BrowserState {
         ));
         window.set_filter_text(SharedString::from(filter_query));
         window.set_current_sort_index(sort_mode.index());
+        window.set_current_conflict_strategy_index(self.conflict_strategy.borrow().index());
         window.set_show_hidden_files(show_hidden);
         window.set_can_clear_recents(!self.recent_paths.borrow().is_empty());
         window.set_can_navigate_back(can_navigate_back);
@@ -1637,12 +1730,16 @@ impl BrowserState {
     fn delete_paths(
         &self,
         paths: Vec<PathBuf>,
+        mode: DeleteMode,
         window: &AppWindow,
         file_model: &VecModel<FileEntry>,
     ) {
         let selected = normalize_operation_paths(paths);
         if selected.is_empty() {
-            *self.status_override.borrow_mut() = Some("Nothing selected to delete".to_string());
+            *self.status_override.borrow_mut() = Some(match mode {
+                DeleteMode::Trash => "Nothing selected to move to Trash".to_string(),
+                DeleteMode::Permanent => "Nothing selected to delete permanently".to_string(),
+            });
             self.apply_view(window, file_model);
             return;
         }
@@ -1651,10 +1748,15 @@ impl BrowserState {
         let mut failures = 0usize;
 
         for path in &selected {
-            let result = if path.is_dir() {
-                fs::remove_dir_all(path)
-            } else {
-                fs::remove_file(path)
+            let result = match mode {
+                DeleteMode::Trash => trash_path(path),
+                DeleteMode::Permanent => {
+                    if path.is_dir() {
+                        fs::remove_dir_all(path)
+                    } else {
+                        fs::remove_file(path)
+                    }
+                }
             };
 
             match result {
@@ -1668,15 +1770,8 @@ impl BrowserState {
 
         self.cancel_rename_internal();
         self.selection_state.borrow_mut().clear_selection();
-        *self.status_override.borrow_mut() = Some(if failures == 0 {
-            format!("Deleted {}", format_item_count(deleted))
-        } else {
-            format!(
-                "Deleted {}, {} failed",
-                format_item_count(deleted),
-                failures
-            )
-        });
+        *self.status_override.borrow_mut() =
+            Some(summarize_delete_completion(mode, deleted, failures));
         self.refresh(window, file_model);
     }
 
@@ -1878,6 +1973,7 @@ impl BrowserState {
 
         let settings = BrowserSettings {
             sort_mode_key: self.sort_mode.borrow().storage_key().to_string(),
+            conflict_strategy_key: self.conflict_strategy.borrow().storage_key().to_string(),
             show_hidden: *self.show_hidden.borrow(),
             last_directory: Some(self.last_loaded_directory.borrow().clone()),
         };
@@ -2172,11 +2268,70 @@ enum TransferKind {
     Cut,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConflictStrategy {
+    KeepBoth,
+    Overwrite,
+    Skip,
+}
+
+impl ConflictStrategy {
+    const ALL: [Self; 3] = [Self::KeepBoth, Self::Overwrite, Self::Skip];
+
+    fn from_index(index: i32) -> Self {
+        match index {
+            1 => Self::Overwrite,
+            2 => Self::Skip,
+            _ => Self::KeepBoth,
+        }
+    }
+
+    fn from_storage_key(key: &str) -> Self {
+        match key {
+            "overwrite" => Self::Overwrite,
+            "skip" => Self::Skip,
+            _ => Self::KeepBoth,
+        }
+    }
+
+    fn index(self) -> i32 {
+        match self {
+            Self::KeepBoth => 0,
+            Self::Overwrite => 1,
+            Self::Skip => 2,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::KeepBoth => "Keep Both",
+            Self::Overwrite => "Overwrite",
+            Self::Skip => "Skip",
+        }
+    }
+
+    fn storage_key(self) -> &'static str {
+        match self {
+            Self::KeepBoth => "keep-both",
+            Self::Overwrite => "overwrite",
+            Self::Skip => "skip",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeleteMode {
+    Trash,
+    Permanent,
+}
+
 fn duplicate_paths_into_directory(
     sources: &[PathBuf],
     current_dir: &Path,
-) -> (Vec<(PathBuf, PathBuf)>, Vec<String>) {
+    strategy: ConflictStrategy,
+) -> (Vec<CompletedTransfer>, usize, Vec<String>) {
     let mut duplicated_paths = Vec::new();
+    let mut skipped = 0usize;
     let mut failures = Vec::new();
 
     for source in sources {
@@ -2185,44 +2340,72 @@ fn duplicate_paths_into_directory(
             continue;
         }
 
-        let destination = destination_for_transfer(TransferKind::Copy, source, current_dir);
-        match copy_path(source, &destination) {
-            Ok(()) => duplicated_paths.push((source.clone(), destination)),
-            Err(error) => failures.push(format!("{}: {}", item_name(source), error)),
+        match plan_transfer_destination(TransferKind::Copy, strategy, source, current_dir) {
+            TransferPlan::Skip => {
+                skipped += 1;
+            }
+            TransferPlan::Apply {
+                destination,
+                replace_existing,
+            } => {
+                let result = if replace_existing {
+                    replace_existing_path(&destination)
+                        .and_then(|_| copy_path(source, &destination))
+                } else {
+                    copy_path(source, &destination)
+                };
+
+                match result {
+                    Ok(()) => duplicated_paths.push(CompletedTransfer {
+                        source: source.clone(),
+                        destination,
+                        replaced_existing: replace_existing,
+                    }),
+                    Err(error) => failures.push(format!("{}: {}", item_name(source), error)),
+                }
+            }
         }
     }
 
-    (duplicated_paths, failures)
+    (duplicated_paths, skipped, failures)
 }
 
-fn summarize_duplicate_completion(completed: &[(PathBuf, PathBuf)], failures: &[String]) -> String {
-    if completed.len() == 1 && failures.is_empty() {
-        let (source, destination) = &completed[0];
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CompletedTransfer {
+    source: PathBuf,
+    destination: PathBuf,
+    replaced_existing: bool,
+}
+
+fn summarize_duplicate_completion(
+    completed: &[CompletedTransfer],
+    skipped: usize,
+    failures: &[String],
+) -> String {
+    if completed.len() == 1 && skipped == 0 && failures.is_empty() {
+        let transfer = &completed[0];
         return format!(
             "Duplicated {} as {}",
-            item_name(source),
-            item_name(destination)
+            item_name(&transfer.source),
+            item_name(&transfer.destination)
         );
     }
 
-    if failures.is_empty() {
+    if failures.is_empty() && skipped == 0 {
         return format!("Duplicated {}", format_item_count(completed.len()));
     }
 
-    format!(
-        "Duplicated {}, {} issue(s)",
-        format_item_count(completed.len()),
-        failures.len()
-    )
+    summarize_transfer_outcome("Duplicated", completed.len(), skipped, failures.len())
 }
 
 fn summarize_paste_completion(
     kind: TransferKind,
-    completed: &[(PathBuf, PathBuf)],
+    completed: &[CompletedTransfer],
+    skipped: usize,
     failures: &[String],
 ) -> String {
-    if completed.len() == 1 && failures.is_empty() {
-        let (source, destination) = &completed[0];
+    if completed.len() == 1 && skipped == 0 && failures.is_empty() {
+        let transfer = &completed[0];
         let verb = match kind {
             TransferKind::Copy => "Copied",
             TransferKind::Cut => "Moved",
@@ -2230,12 +2413,12 @@ fn summarize_paste_completion(
         return format!(
             "{} {} to {}",
             verb,
-            item_name(source),
-            item_name(destination)
+            item_name(&transfer.source),
+            item_name(&transfer.destination)
         );
     }
 
-    if failures.is_empty() {
+    if failures.is_empty() && skipped == 0 {
         return format!(
             "{} {}",
             match kind {
@@ -2246,15 +2429,51 @@ fn summarize_paste_completion(
         );
     }
 
-    format!(
-        "{} {}, {} issue(s)",
+    summarize_transfer_outcome(
         match kind {
             TransferKind::Copy => "Copied",
             TransferKind::Cut => "Moved",
         },
-        format_item_count(completed.len()),
-        failures.len()
+        completed.len(),
+        skipped,
+        failures.len(),
     )
+}
+
+fn summarize_transfer_outcome(
+    verb: &str,
+    completed_count: usize,
+    skipped_count: usize,
+    failure_count: usize,
+) -> String {
+    let mut parts = Vec::new();
+    if completed_count > 0 {
+        parts.push(format!("{verb} {}", format_item_count(completed_count)));
+    }
+    if skipped_count > 0 {
+        parts.push(format!("skipped {}", format_item_count(skipped_count)));
+    }
+    if failure_count > 0 {
+        parts.push(format!("{failure_count} failed"));
+    }
+    if parts.is_empty() {
+        "Nothing changed".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+fn summarize_delete_completion(mode: DeleteMode, deleted: usize, failures: usize) -> String {
+    let verb = match mode {
+        DeleteMode::Trash => "Moved to Trash",
+        DeleteMode::Permanent => "Deleted permanently",
+    };
+
+    if failures == 0 {
+        return format!("{verb} {}", format_item_count(deleted));
+    }
+
+    format!("{verb} {}, {} failed", format_item_count(deleted), failures)
 }
 
 #[cfg(test)]
@@ -2548,13 +2767,23 @@ mod tests {
         let source = dir.join("report.txt");
         fs::write(&source, "hello").unwrap();
 
-        let (duplicated, failures) =
-            duplicate_paths_into_directory(std::slice::from_ref(&source), &dir);
+        let (duplicated, skipped, failures) = duplicate_paths_into_directory(
+            std::slice::from_ref(&source),
+            &dir,
+            ConflictStrategy::KeepBoth,
+        );
 
+        assert_eq!(skipped, 0);
         assert!(failures.is_empty());
         assert_eq!(duplicated.len(), 1);
-        assert_eq!(duplicated[0].1.file_name().unwrap(), "report Copy.txt");
-        assert_eq!(fs::read_to_string(&duplicated[0].1).unwrap(), "hello");
+        assert_eq!(
+            duplicated[0].destination.file_name().unwrap(),
+            "report Copy.txt"
+        );
+        assert_eq!(
+            fs::read_to_string(&duplicated[0].destination).unwrap(),
+            "hello"
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -2593,10 +2822,12 @@ mod tests {
     #[test]
     fn summarize_duplicate_completion_reports_single_item_target_name() {
         let summary = summarize_duplicate_completion(
-            &[(
-                PathBuf::from("/workspace/report.txt"),
-                PathBuf::from("/workspace/report Copy.txt"),
-            )],
+            &[CompletedTransfer {
+                source: PathBuf::from("/workspace/report.txt"),
+                destination: PathBuf::from("/workspace/report Copy.txt"),
+                replaced_existing: false,
+            }],
+            0,
             &[],
         );
 
@@ -2607,14 +2838,23 @@ mod tests {
     fn summarize_paste_completion_reports_single_copy_target_name() {
         let summary = summarize_paste_completion(
             TransferKind::Copy,
-            &[(
-                PathBuf::from("/workspace/report.txt"),
-                PathBuf::from("/workspace/report Copy.txt"),
-            )],
+            &[CompletedTransfer {
+                source: PathBuf::from("/workspace/report.txt"),
+                destination: PathBuf::from("/workspace/report Copy.txt"),
+                replaced_existing: false,
+            }],
+            0,
             &[],
         );
 
         assert_eq!(summary, "Copied report.txt to report Copy.txt");
+    }
+
+    #[test]
+    fn summarize_transfer_outcome_mentions_skipped_conflicts() {
+        let summary = summarize_transfer_outcome("Copied", 1, 2, 0);
+
+        assert_eq!(summary, "Copied 1 item, skipped 2 items");
     }
 
     #[test]

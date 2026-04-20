@@ -53,6 +53,8 @@ Files Rusted/
 - 已支持重命名输入框自动聚焦与全选
 - 已支持清空应用内剪贴板
 - 已补稳 Paste / Duplicate 后的选择恢复
+- 已支持回收站 / 永久删除双路径
+- 已支持 Paste / Duplicate 冲突策略
 - 已实现 `Back / Forward` 导航历史
 - 已实现面包屑导航
 - 已实现路径直接输入并跳转
@@ -112,6 +114,7 @@ Files Rusted/
    - 支持从工具栏直接触发 `Open / Duplicate / New File / New Folder / Paste / Clear Clipboard / Clear Recents`
    - `Open` 和 `Paste` 会根据当前选择或剪贴状态自动启用 / 禁用
    - 这条路径可作为右键菜单之外的显式操作入口
+   - 支持通过工具栏设置 `Keep Both / Overwrite / Skip` 冲突策略
 7. 当前已具备搜索栏增强：
    - 支持 `Ctrl+F` 快速聚焦并全选搜索框
    - 支持通过工具栏 `Clear` 按钮一键清空当前筛选
@@ -161,11 +164,16 @@ Files Rusted/
    - `Duplicate`：直接在当前目录复制当前选中项，并沿用同目录 `Copy` 后缀命名策略
    - `Clear Clipboard`：清空当前应用内复制/剪切状态
    - `Paste / Duplicate` 完成后，会等目录刷新完成再恢复新结果的选择状态
+   - `Paste / Duplicate` 现在支持 `Keep Both / Overwrite / Skip` 三种冲突策略，并会持久化当前策略
 15. 当前上下文菜单分三层：
    - 项目菜单：`Open / Select / Copy / Duplicate / Cut / Rename / Delete`
-   - 工作区空白区域菜单：`Open / Copy / Duplicate / Cut / Paste / Clear Clipboard / Rename / Delete / New File / New Folder / Select All / Clear Selection`
-   - 侧边栏菜单：`Open / Remove Favorite / Remove from Recents`
-16. 当前空白区域交互：
+    - 工作区空白区域菜单：`Open / Copy / Duplicate / Cut / Paste / Clear Clipboard / Rename / Delete / New File / New Folder / Select All / Clear Selection`
+    - 侧边栏菜单：`Open / Remove Favorite / Remove from Recents`
+16. 当前删除语义已拆成双路径：
+   - `Delete`：默认移动到系统回收站 / Trash
+   - `Shift+Delete`：永久删除，不经过回收站
+   - 项目菜单与工作区菜单都提供 `Move to Trash / Delete Permanently`
+17. 当前空白区域交互：
    - 左键点击空白区域：清空焦点和选中集合
    - 右键点击空白区域：弹出工作区菜单
 

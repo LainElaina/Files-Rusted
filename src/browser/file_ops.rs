@@ -1,6 +1,6 @@
-use super::TransferKind;
+use super::{ConflictStrategy, TransferKind};
 use std::{
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -75,7 +75,70 @@ pub(super) fn move_path(source: &Path, destination: &Path) -> std::io::Result<()
     }
 }
 
+pub(super) fn trash_path(path: &Path) -> io::Result<()> {
+    trash::delete(path).map_err(|error| io::Error::other(error.to_string()))
+}
+
+#[cfg(test)]
 pub(super) fn destination_for_transfer(
+    kind: TransferKind,
+    source: &Path,
+    target_dir: &Path,
+) -> PathBuf {
+    keep_both_destination_for_transfer(kind, source, target_dir)
+}
+
+pub(super) enum TransferPlan {
+    Apply {
+        destination: PathBuf,
+        replace_existing: bool,
+    },
+    Skip,
+}
+
+pub(super) fn plan_transfer_destination(
+    kind: TransferKind,
+    strategy: ConflictStrategy,
+    source: &Path,
+    target_dir: &Path,
+) -> TransferPlan {
+    let preferred = preferred_destination_for_transfer(kind, source, target_dir);
+
+    match strategy {
+        ConflictStrategy::KeepBoth => TransferPlan::Apply {
+            destination: keep_both_destination_for_transfer(kind, source, target_dir),
+            replace_existing: false,
+        },
+        ConflictStrategy::Overwrite => TransferPlan::Apply {
+            replace_existing: preferred.exists(),
+            destination: preferred,
+        },
+        ConflictStrategy::Skip => {
+            if preferred.exists() {
+                TransferPlan::Skip
+            } else {
+                TransferPlan::Apply {
+                    destination: preferred,
+                    replace_existing: false,
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn replace_existing_path(path: &Path) -> io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+}
+
+fn keep_both_destination_for_transfer(
     kind: TransferKind,
     source: &Path,
     target_dir: &Path,
@@ -102,6 +165,26 @@ pub(super) fn destination_for_transfer(
     };
 
     unique_child_path(target_dir, &copy_base, extension.as_deref())
+}
+
+fn preferred_destination_for_transfer(
+    kind: TransferKind,
+    source: &Path,
+    target_dir: &Path,
+) -> PathBuf {
+    if matches!(kind, TransferKind::Cut) {
+        return target_dir.join(item_name(source));
+    }
+
+    if source.parent() != Some(target_dir) {
+        return target_dir.join(item_name(source));
+    }
+
+    let (stem, extension) = split_name_parts(source);
+    match extension {
+        Some(extension) => target_dir.join(format!("{stem} Copy.{extension}")),
+        None => target_dir.join(format!("{stem} Copy")),
+    }
 }
 
 pub(super) fn launch_path(path: &Path) -> std::io::Result<()> {
@@ -219,6 +302,75 @@ mod tests {
         let destination = destination_for_transfer(TransferKind::Copy, &source, &dir);
 
         assert_eq!(destination.file_name().unwrap(), "report Copy.txt");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn plan_transfer_destination_can_skip_existing_target() {
+        let source_parent = test_dir("skip-source");
+        let target_parent = test_dir("skip-target");
+        fs::create_dir_all(&source_parent).unwrap();
+        fs::create_dir_all(&target_parent).unwrap();
+        let source = source_parent.join("report.txt");
+        let target = target_parent.join("report.txt");
+        fs::write(&source, "one").unwrap();
+        fs::write(&target, "two").unwrap();
+
+        let plan = plan_transfer_destination(
+            TransferKind::Copy,
+            ConflictStrategy::Skip,
+            &source,
+            &target_parent,
+        );
+
+        match plan {
+            TransferPlan::Skip => assert!(target.exists()),
+            TransferPlan::Apply { .. } => panic!("expected skip plan"),
+        }
+
+        fs::remove_dir_all(&source_parent).unwrap();
+        fs::remove_dir_all(&target_parent).unwrap();
+    }
+
+    #[test]
+    fn plan_transfer_destination_can_overwrite_existing_copy_target() {
+        let dir = test_dir("overwrite-copy");
+        fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("report.txt");
+        let existing_copy = dir.join("report Copy.txt");
+        fs::write(&source, "one").unwrap();
+        fs::write(&existing_copy, "two").unwrap();
+
+        let plan = plan_transfer_destination(
+            TransferKind::Copy,
+            ConflictStrategy::Overwrite,
+            &source,
+            &dir,
+        );
+
+        match plan {
+            TransferPlan::Apply {
+                destination,
+                replace_existing,
+            } => {
+                assert_eq!(destination, existing_copy);
+                assert!(replace_existing);
+            }
+            TransferPlan::Skip { .. } => panic!("expected apply plan"),
+        }
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn trash_path_returns_error_for_missing_item() {
+        let dir = test_dir("trash-missing");
+        fs::create_dir_all(&dir).unwrap();
+        let missing = dir.join("missing.txt");
+
+        let error = trash_path(&missing).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::Other);
         fs::remove_dir_all(&dir).unwrap();
     }
 }
